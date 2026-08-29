@@ -1,0 +1,3 @@
+import type { PostStatus } from "./types.js";
+const TRANSITIONS: Record<PostStatus, PostStatus[]> = { DRAFT: ["REVIEW", "APPROVED", "CANCELLED", "SKIPPED_DUPLICATE"], REVIEW: ["APPROVED", "CANCELLED", "SKIPPED_DUPLICATE"], APPROVED: ["SCHEDULED", "PUBLISHING", "CANCELLED"], SCHEDULED: ["PUBLISHING", "CANCELLED", "EXPIRED"], PUBLISHING: ["PUBLISHED", "FAILED"], FAILED: ["PUBLISHING", "CANCELLED"], PUBLISHED: [], CANCELLED: [], SKIPPED_DUPLICATE: [], EXPIRED: ["CANCELLED"] };
+export function assertTransition(from: PostStatus, to: PostStatus): void { if (!TRANSITIONS[from].includes(to)) throw new Error(`Invalid post status transition: ${from} -> ${to}`); }

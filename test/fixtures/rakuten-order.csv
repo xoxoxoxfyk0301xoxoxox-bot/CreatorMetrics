@@ -1,0 +1,12 @@
+注文別成果: 2026.07
+ステータスコード定義
+0,未確定
+1,確定
+2,破棄
+
+リンクタイプコード定義
+sample,sample
+
+発生日,成果報酬,料率,売上金額,ジャンル名,ショップ名,商品名,ステータス,リンクタイプ,デバイスタイプ,計測ID
+date,rewards,rate,amount,genre_name,shop_name,item_name,status,link_type,device_type,measurement_id
+2026-07-01,100,2%,"5,000",匿名ジャンル,匿名ショップ,匿名商品,0,商品リンク,スマートフォン,measure-anonymous
