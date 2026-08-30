@@ -1,0 +1,4 @@
+import { readFile } from "node:fs/promises";
+import type { ContentStrategy } from "./types.js";
+const fields: (keyof ContentStrategy)[] = ["language","voice","audience","contentPillars","avoidTopics","styleRules","publicDisclosureRules","verifiedFacts"];
+export async function loadContentStrategy(path=process.env.THREADS_CONTENT_STRATEGY?.trim()||"config/threads-content-strategy.json"):Promise<ContentStrategy>{const value=JSON.parse(await readFile(path,"utf8")) as Record<string,unknown>;for(const field of fields){if(field==="language"||field==="voice"){if(typeof value[field]!=="string"||!value[field])throw new Error(`Invalid content strategy: ${field}`);}else if(!Array.isArray(value[field])||value[field]!.some(x=>typeof x!=="string"))throw new Error(`Invalid content strategy: ${field}`);}if(!(value.contentPillars as string[]).length)throw new Error("Content strategy requires contentPillars");return value as unknown as ContentStrategy;}

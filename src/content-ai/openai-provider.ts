@@ -1,0 +1,14 @@
+import OpenAI from "openai";
+import { CONTENT_LIMITS } from "./planner.js";
+import { draftPrompt, duplicatePrompt, planPrompt } from "./prompt-builder.js";
+import { redactAIError } from "./safety.js";
+import type { AIContext, ContentAIProvider, ContentLedgerRecord, ContentPlanRecord, DraftCandidate, DuplicateReview, PlanSeed } from "./types.js";
+const textSchema={type:"object",additionalProperties:false,properties:{content:{type:"string"},coreTheme:{type:"string"},claim:{type:"string"},readerValue:{type:"string"},advice:{type:"string"},angle:{type:"string"},hookType:{type:"string"},contentSummary:{type:"string"}},required:["content","coreTheme","claim","readerValue","advice","angle","hookType","contentSummary"]} as const;
+const planItem={type:"object",additionalProperties:false,properties:{targetDate:{type:"string"},slot:{type:"string"},contentPillar:{type:"string"},coreTheme:{type:"string"},angle:{type:"string"},goal:{type:"string"},hookIdea:{type:"string"}},required:["targetDate","slot","contentPillar","coreTheme","angle","goal","hookIdea"]} as const;
+export class OpenAIContentProvider implements ContentAIProvider{
+  readonly name="openai";private client:OpenAI;constructor(apiKey:string,readonly model:string){if(!apiKey.trim())throw new Error("Missing required environment variable: OPENAI_API_KEY");this.client=new OpenAI({apiKey,maxRetries:CONTENT_LIMITS.maxRetries});}
+  private async json<T>(name:string,prompt:string,schema:Record<string,unknown>):Promise<T>{try{const r=await this.client.responses.create({model:this.model,input:[{role:"developer",content:"Return only the requested structured data. Follow every safety rule."},{role:"user",content:prompt}],text:{format:{type:"json_schema",name,strict:true,schema}}});if(!r.output_text)throw new Error("OpenAI response contained no output");return JSON.parse(r.output_text) as T;}catch(e){throw new Error(redactAIError(e));}}
+  async generatePlan(seeds:PlanSeed[],context:AIContext){const r=await this.json<{plans:Omit<ContentPlanRecord,"planId"|"status"|"generatedPostId"|"createdAt"|"updatedAt"|"notes"|"regenerationCount">[]}>("threads_content_plan",planPrompt(seeds,context),{type:"object",additionalProperties:false,properties:{plans:{type:"array",minItems:seeds.length,maxItems:seeds.length,items:planItem}},required:["plans"]});return r.plans;}
+  generateDraft(plan:ContentPlanRecord,context:AIContext){return this.json<DraftCandidate>("threads_content_draft",draftPrompt(plan,context),textSchema);}
+  reviewDuplicate(candidate:DraftCandidate,ledger:ContentLedgerRecord[]){return this.json<DuplicateReview>("threads_duplicate_review",duplicatePrompt(candidate,ledger),{type:"object",additionalProperties:false,properties:{status:{type:"string",enum:["UNIQUE","POSSIBLE_DUPLICATE","DUPLICATE"]},matchedContentId:{type:"string"},reason:{type:"string"}},required:["status","matchedContentId","reason"]});}
+}

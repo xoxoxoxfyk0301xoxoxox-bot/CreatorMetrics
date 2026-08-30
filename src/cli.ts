@@ -2,7 +2,7 @@ import { createServer } from "node:http";
 import { writeFile } from "node:fs/promises";
 import { URL } from "node:url";
 import { google } from "googleapis";
-import { loadConfig, loadPinterestConfig, loadThreadsConfig, loadThreadsOAuthConfig, loadYouTubeConfig } from "./config.js";
+import { loadConfig, loadContentAIConfig, loadPinterestConfig, loadThreadsConfig, loadThreadsOAuthConfig, loadYouTubeConfig } from "./config.js";
 import { assertIsoDate, yesterdayInTimeZone } from "./date.js";
 import { createGoogleAuth, GOOGLE_SCOPES } from "./google-auth.js";
 import { YouTubeAdapter } from "./adapters/youtube.js";
@@ -27,6 +27,11 @@ import { GoogleSheetsReportStore } from "./report/google-sheets.js";
 import { GoogleSheetsPostStore } from "./posting/google-sheets.js";
 import { ThreadsPostService } from "./posting/service.js";
 import { readPostCandidates } from "./posting/batch.js";
+import { loadContentStrategy } from "./content-ai/strategy.js";
+import { OpenAIContentProvider } from "./content-ai/openai-provider.js";
+import { GoogleSheetsContentStore } from "./content-ai/google-sheets.js";
+import { ThreadsContentService } from "./content-ai/service.js";
+import { createNoCallProvider } from "./content-ai/dry-provider.js";
 
 type SelectedPlatform = "youtube" | "pinterest" | "threads";
 
@@ -210,6 +215,17 @@ async function posting(command: string): Promise<void> {
   else if (command === "post:threads:upcoming") {const limit=process.argv.includes("--limit")?Number(cliOption("limit")):10;for(const p of (await service.list()).filter(p=>p.status==="SCHEDULED").sort((a,b)=>a.scheduledAt.localeCompare(b.scheduledAt)).slice(0,limit))console.log(`${p.scheduledAt} preview=${JSON.stringify(p.content.slice(0,80))} postId=${p.postId}`);}
 }
 
+async function contentAI(command:string):Promise<void>{
+  const config=loadConfig(),needsAI=(command==="content:threads:plan"&&!process.argv.includes("--dry-run"))||command==="content:threads:generate"||command==="content:threads:dry-run"||command==="content:threads:regenerate",ai=needsAI?loadContentAIConfig():null,model=ai?.model||process.env.OPENAI_CONTENT_MODEL?.trim()||"gpt-5-mini",auth=createGoogleAuth(config.google),postStore=new GoogleSheetsPostStore(auth,config.google.sheetId),contentStore=new GoogleSheetsContentStore(auth,config.google.sheetId),strategy=await loadContentStrategy(),provider=ai?new OpenAIContentProvider(ai.apiKey,ai.model):createNoCallProvider(model),service=new ThreadsContentService(contentStore,postStore,provider,strategy);
+  if(command==="content:threads:plan"){const days=Number(process.argv.includes("--days")?cliOption("days"):7),perDay=Number(process.argv.includes("--posts-per-day")?cliOption("posts-per-day"):3),dry=process.argv.includes("--dry-run"),plans=await service.createPlan(days,perDay,dry);console.log(`Threads Content Plan${dry?" (DRY-RUN)":""}\n件数: ${plans.length}\n概算AI request: ${dry?0:1}`);for(const p of plans)console.log(`${p.targetDate} ${p.slot} | ${p.contentPillar} | ${p.coreTheme}`);}
+  else if(command==="content:threads:plan:list"){for(const p of await contentStore.listPlans())console.log(`${p.planId} | ${p.targetDate} ${p.slot} | ${p.status} | ${p.contentPillar} | ${p.coreTheme}`);}
+  else if(command==="content:threads:generate"||command==="content:threads:dry-run"){const dry=command.endsWith("dry-run")||process.argv.includes("--dry-run"),result=await service.generate({...(process.argv.includes("--plan-id")?{planId:cliOption("plan-id")} :{}),count:Number(process.argv.includes("--count")?cliOption("count"):5),dryRun:dry});console.log(`Threads AI Draft${dry?" (DRY-RUN)":""}\n対象: ${result.length}\nQueue変更: ${dry?"なし":"DRAFT/REVIEWのみ"}`);for(const x of result)console.log(`planId=${x.plan.planId} duplicate=${x.duplicate?.status??"ERROR"} postId=${x.postId??"-"}\n${x.candidate?.content??x.errors.join(", ")}\n`);}
+  else if(command==="content:threads:review"){const plans=await contentStore.listPlans(),posts=await postStore.listPosts();for(const p of plans.filter(x=>x.status==="GENERATED")){const post=posts.find(x=>x.postId===p.generatedPostId);console.log(`Plan: ${p.planId}\n日付: ${p.targetDate} ${p.slot}\nPillar: ${p.contentPillar}\nTheme: ${p.coreTheme}\nPost ID: ${p.generatedPostId}\nStatus: ${post?.status??"missing"}\n本文:\n${post?.content??""}\nNotes: ${post?.notes??""}\n`);}}
+  else if(command==="content:threads:reject")console.log(`status=${(await service.reject(cliOption("plan-id"))).status}`);
+  else if(command==="content:threads:regenerate"){const r=await service.regenerate(cliOption("plan-id"),process.argv.includes("--dry-run"));console.log(`regenerated=${r.length} dryRun=${process.argv.includes("--dry-run")}`);}
+  else if(command==="content:threads:status"){const plans=await contentStore.listPlans(),posts=await postStore.listPosts(),count=(s:string)=>plans.filter(x=>x.status===s).length,pcount=(s:string)=>posts.filter(x=>x.status===s&&x.source==="AI_CONTENT_PHASE3").length,next=posts.filter(x=>x.status==="SCHEDULED").sort((a,b)=>a.scheduledAt.localeCompare(b.scheduledAt))[0];console.log(`Threads Content Status\n\nPlan: ${plans.length}\n生成済み: ${count("GENERATED")}\n重複除外: ${count("SKIPPED_DUPLICATE")}\n却下: ${count("REJECTED")}\nDRAFT: ${pcount("DRAFT")}\nREVIEW: ${pcount("REVIEW")}\n承認済み: ${pcount("APPROVED")}\n予約済み: ${pcount("SCHEDULED")}\n次回投稿: ${next?.scheduledAt??"なし"}`);}
+}
+
 const command = process.argv[2] ?? "collect";
 if (command === "collect") await collect(["youtube", "pinterest", "threads"]);
 else if (command === "collect:youtube") await collect(["youtube"]);
@@ -225,5 +241,6 @@ else if (command === "import:rakuten") await importCsv("rakuten");
 else if (command === "dashboard") await dashboard();
 else if (command === "report") await report();
 else if (command === "daily") await daily();
+else if (command.startsWith("content:threads:")) await contentAI(command);
 else if (command.startsWith("post:threads:")) await posting(command);
 else throw new Error(`Unknown command: ${command}`);

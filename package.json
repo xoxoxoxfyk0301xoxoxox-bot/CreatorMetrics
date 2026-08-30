@@ -4,7 +4,9 @@
   "private": true,
   "description": "Daily YouTube and Pinterest metrics collector for Google Sheets",
   "type": "module",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "collect": "tsx src/cli.ts collect",
@@ -44,12 +46,21 @@
     "post:scheduler:status": "node scripts/post-scheduler.mjs status",
     "post:scheduler:run": "node scripts/post-scheduler.mjs run",
     "post:scheduler:uninstall": "node scripts/post-scheduler.mjs uninstall",
+    "content:threads:plan": "tsx src/cli.ts content:threads:plan",
+    "content:threads:plan:list": "tsx src/cli.ts content:threads:plan:list",
+    "content:threads:generate": "tsx src/cli.ts content:threads:generate",
+    "content:threads:review": "tsx src/cli.ts content:threads:review",
+    "content:threads:status": "tsx src/cli.ts content:threads:status",
+    "content:threads:dry-run": "tsx src/cli.ts content:threads:dry-run",
+    "content:threads:reject": "tsx src/cli.ts content:threads:reject",
+    "content:threads:regenerate": "tsx src/cli.ts content:threads:regenerate",
     "test": "vitest run",
     "verify": "npm run build && npm test"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
-    "googleapis": "^176.0.0"
+    "googleapis": "^176.0.0",
+    "openai": "^7.8.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.1",

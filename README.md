@@ -133,6 +133,30 @@ Labelは`com.creator-metrics-collector.threads-publisher`、`StartInterval`は30
 
 Macがスリープ、電源OFF、ログアウト中は投稿できません。起動・復帰後の次回5分checkでdue処理しますが、360分を超えて遅延した予約は`EXPIRED`になります。ログはlaunchdが自動rotationしないため、月1回程度サイズを確認し、ジョブ停止中に退避・圧縮してください。`post:scheduler:uninstall`はpublisher用plistだけを解除・削除し、既存の`com.creator-metrics-collector.daily`には触れません。
 
+## Threads Content Planning & AI Draft Generation
+
+Phase 3は投稿処理の前段だけを担当します。OpenAI公式SDKのResponses APIとStructured Outputsを使い、Content Planと投稿案を生成します。AIから直接APPROVED、SCHEDULED、PUBLISHEDへ進む経路はなく、生成結果は必ず`DRAFT`または`REVIEW`から始まります。
+
+`config/threads-content-strategy.json`で言語、voice、audience、Content Pillar、避ける話題、文体、公開禁止情報、検証済み事実を編集できます。公開禁止ルールには投稿自動化、API、launchd、Scheduler、Collector、Token、OAuth、Secret、GitHub内部構造、Queue、テスト情報を含めています。数値実績は`verifiedFacts`に明示された根拠がない限り安全検査で拒否します。
+
+```bash
+npm run content:threads:plan -- --days 7 --posts-per-day 3 --dry-run
+npm run content:threads:plan -- --days 7 --posts-per-day 3
+npm run content:threads:plan:list
+npm run content:threads:generate -- --count 5 --dry-run
+npm run content:threads:generate -- --count 5
+npm run content:threads:review
+npm run content:threads:status
+npm run content:threads:reject -- --plan-id PLAN_ID
+npm run content:threads:regenerate -- --plan-id PLAN_ID --dry-run
+```
+
+1 runのPlan／Draft上限は21件、SDK retryは2回、同じPlanの再生成は2回までです。dry-runはPostQueueとPlan statusを変更せず、`ContentAIRunLog`へ件数・概算Token・`DRY_RUN`だけを保存します。Prompt全文やAPI Keyは保存しません。
+
+`ContentLedger`はPUBLISHEDだけでなくDRAFT、REVIEW、APPROVED、SCHEDULEDも参照し、coreTheme、claim、readerValue、adviceの4軸で比較します。文字列の完全・近似重複は既存Phase 1判定を維持し、Phase 3ではAIとdeterministic判定の厳しい方を採用します。`DUPLICATE`はQueueへ入れず、`POSSIBLE_DUPLICATE`は`REVIEW`、`UNIQUE`は`DRAFT`です。Threads実績は`HIGH / NORMAL / LOW / INSUFFICIENT_DATA`のテーマ選定contextに限り、好成績投稿の言い換え量産には使いません。
+
+AIコマンドだけが`OPENAI_API_KEY`を要求します。Collector、daily、publisherはKey未設定でも従来どおり動作します。AIへ送るのはStrategy、Plan、Ledger要約、予約投稿要約、Threads実績要約だけで、OAuth／Token／Secret／購入者情報／`.env`本文は送りません。API実装は[OpenAI公式JavaScript quickstart](https://platform.openai.com/docs/quickstart/make-your-first-api-request)に基づきます。
+
 全媒体実行時に媒体固有ENVが不足している場合、その媒体だけが `failed` として `CollectionLog` に記録され、設定済み媒体の収集は継続します。共通ENV（`GOOGLE_CLIENT_ID`、`GOOGLE_CLIENT_SECRET`、`GOOGLE_REFRESH_TOKEN`、`METRICS_SPREADSHEET_ID`、`TZ`）は起動時に必須です。
 
 特定日の再取得（同一キーを更新）:

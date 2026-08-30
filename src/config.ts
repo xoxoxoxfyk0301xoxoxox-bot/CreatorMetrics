@@ -18,6 +18,7 @@ export interface Config {
 
 export interface YouTubeConfig { channelId: string }
 export interface PinterestConfig { accessToken: string; username: string; baseUrl: string }
+export interface ContentAIConfig { provider: "openai"; apiKey: string; model: string }
 export interface ThreadsConfig {
   appId: string; appSecret: string; redirectUri: string; accessToken: string;
   lookbackDays: number; tokenFile: string; baseUrl: string;
@@ -63,6 +64,8 @@ export function loadPinterestConfig(env: NodeJS.ProcessEnv = process.env): Pinte
     baseUrl
   };
 }
+
+export function loadContentAIConfig(env:NodeJS.ProcessEnv=process.env):ContentAIConfig{const provider=(env.CONTENT_AI_PROVIDER?.trim()||"openai").toLowerCase();if(provider!=="openai")throw new Error(`Unsupported CONTENT_AI_PROVIDER: ${provider}`);return{provider:"openai",apiKey:required(env,"OPENAI_API_KEY"),model:env.OPENAI_CONTENT_MODEL?.trim()||"gpt-5-mini"};}
 
 export function loadThreadsConfig(env: NodeJS.ProcessEnv = process.env): ThreadsConfig {
   const lookbackDays = Number(env.THREADS_LOOKBACK_DAYS?.trim() || "90");
