@@ -54,6 +54,7 @@
     "content:threads:dry-run": "tsx src/cli.ts content:threads:dry-run",
     "content:threads:reject": "tsx src/cli.ts content:threads:reject",
     "content:threads:regenerate": "tsx src/cli.ts content:threads:regenerate",
+    "posting:dashboard": "tsx src/cli.ts posting:dashboard",
     "test": "vitest run",
     "verify": "npm run build && npm test"
   },

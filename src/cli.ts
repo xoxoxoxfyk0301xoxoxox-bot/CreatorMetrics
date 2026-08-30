@@ -32,6 +32,8 @@ import { OpenAIContentProvider } from "./content-ai/openai-provider.js";
 import { GoogleSheetsContentStore } from "./content-ai/google-sheets.js";
 import { ThreadsContentService } from "./content-ai/service.js";
 import { createNoCallProvider } from "./content-ai/dry-provider.js";
+import { GoogleSheetsPostingDashboardStore } from "./posting-dashboard/google-sheets.js";
+import { runPostingDashboard } from "./posting-dashboard/index.js";
 
 type SelectedPlatform = "youtube" | "pinterest" | "threads";
 
@@ -226,6 +228,8 @@ async function contentAI(command:string):Promise<void>{
   else if(command==="content:threads:status"){const plans=await contentStore.listPlans(),posts=await postStore.listPosts(),count=(s:string)=>plans.filter(x=>x.status===s).length,pcount=(s:string)=>posts.filter(x=>x.status===s&&x.source==="AI_CONTENT_PHASE3").length,next=posts.filter(x=>x.status==="SCHEDULED").sort((a,b)=>a.scheduledAt.localeCompare(b.scheduledAt))[0];console.log(`Threads Content Status\n\nPlan: ${plans.length}\n生成済み: ${count("GENERATED")}\n重複除外: ${count("SKIPPED_DUPLICATE")}\n却下: ${count("REJECTED")}\nDRAFT: ${pcount("DRAFT")}\nREVIEW: ${pcount("REVIEW")}\n承認済み: ${pcount("APPROVED")}\n予約済み: ${pcount("SCHEDULED")}\n次回投稿: ${next?.scheduledAt??"なし"}`);}
 }
 
+async function postingDashboard():Promise<void>{const config=loadConfig(),auth=createGoogleAuth(config.google),store=new GoogleSheetsPostingDashboardStore(auth,config.google.sheetId),asOf=assertIsoDate(process.env.POSTING_DASHBOARD_DATE?.trim()||dateInTimeZone(new Date(),"Asia/Tokyo")),output=await runPostingDashboard(store,store,asOf);console.log(`PostingDashboard generated: week=${output.summary.weekStart}..${output.summary.weekEnd} rows=${output.rows.length} next=${output.summary.nextScheduled}`);}
+
 const command = process.argv[2] ?? "collect";
 if (command === "collect") await collect(["youtube", "pinterest", "threads"]);
 else if (command === "collect:youtube") await collect(["youtube"]);
@@ -241,6 +245,7 @@ else if (command === "import:rakuten") await importCsv("rakuten");
 else if (command === "dashboard") await dashboard();
 else if (command === "report") await report();
 else if (command === "daily") await daily();
+else if (command === "posting:dashboard") await postingDashboard();
 else if (command.startsWith("content:threads:")) await contentAI(command);
 else if (command.startsWith("post:threads:")) await posting(command);
 else throw new Error(`Unknown command: ${command}`);

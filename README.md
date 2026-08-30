@@ -157,6 +157,20 @@ npm run content:threads:regenerate -- --plan-id PLAN_ID --dry-run
 
 AIコマンドだけが`OPENAI_API_KEY`を要求します。Collector、daily、publisherはKey未設定でも従来どおり動作します。AIへ送るのはStrategy、Plan、Ledger要約、予約投稿要約、Threads実績要約だけで、OAuth／Token／Secret／購入者情報／`.env`本文は送りません。API実装は[OpenAI公式JavaScript quickstart](https://platform.openai.com/docs/quickstart/make-your-first-api-request)に基づきます。
 
+## Threads Posting Dashboard
+
+`npm run posting:dashboard`はPostQueue、ContentPlan、ContentLedger、PostHistoryを読み取り、表示専用の`PostingDashboard`タブだけを再生成します。SSOT側の値は更新せず、Dashboard編集から承認・予約・投稿が実行されることもありません。OpenAI API KeyとThreads Access Tokenは不要です。
+
+上部にはAsia/Tokyoの月曜〜日曜を対象とする今週件数、下書き、要確認、承認済、予約済、投稿済、エラー、次回投稿を表示します。一覧は今週を先頭に投稿日・投稿時刻・status順で並べ、内部ID、contentHash、threadsPostId、errorCode、retryCountは表示しません。Content PillarとCore ThemeはPlan／Ledgerに存在する値だけを結合し、欠損時は推測せず「未設定」、重複情報がない場合は「未判定」とします。
+
+```bash
+npm run posting:dashboard
+# 再現可能な検証
+POSTING_DASHBOARD_DATE=2026-08-31 npm run posting:dashboard
+```
+
+Phase 3.1ではdailyへの自動組込み、Apps Script、DashboardからのApprove／Schedule／Publishは行いません。運用確認後にdaily連携を別変更として追加できます。
+
 全媒体実行時に媒体固有ENVが不足している場合、その媒体だけが `failed` として `CollectionLog` に記録され、設定済み媒体の収集は継続します。共通ENV（`GOOGLE_CLIENT_ID`、`GOOGLE_CLIENT_SECRET`、`GOOGLE_REFRESH_TOKEN`、`METRICS_SPREADSHEET_ID`、`TZ`）は起動時に必須です。
 
 特定日の再取得（同一キーを更新）:
