@@ -1,4 +1,4 @@
-import type { DashboardOutput, DashboardRow, DataQuality, TopContentRecord, WeeklySummaryRecord } from "../dashboard/types.js";
+import type { ActivityStatus, CollectionStatus, ComparisonStatus, DashboardOutput, DashboardRow, DataQuality, TopContentRecord, WeeklySummaryRecord } from "../dashboard/types.js";
 import type { ReportDocument, ReportLine } from "./types.js";
 
 export const REPORT_THRESHOLDS = { strongGrowth: 0.2, growth: 0.05, decline: -0.05, strongDecline: -0.2, titleLength: 80 } as const;
@@ -33,16 +33,20 @@ const display = (item: DashboardRow | undefined, suffix = "") => item?.value ===
 const quality = (item: DashboardRow | undefined): DataQuality => item?.quality ?? "NO_DATA";
 
 function platformAssessment(output: DashboardOutput, section: "YouTube" | "Threads"): ReportAssessment {
-  const comparison = row(output, section, "前週比");
-  return assessChange(comparison?.value ?? null, comparison?.display ?? "比較不能", quality(comparison));
+  const comparison = row(output, section, "前週比"),weekly=currentWeekly(output,section.toLowerCase());
+  return assessChange(comparison?.value ?? null, comparison?.display ?? "比較不能",weekly?.comparisonStatus==="COMPARABLE"?quality(comparison):"INSUFFICIENT_BASELINE");
 }
+const collectionJa:Record<CollectionStatus,string>={OK:"正常",PARTIAL:"一部取得",FAILED:"取得失敗",STALE:"更新待ち",NO_DATA:"データなし"};
+const activityJa:Record<ActivityStatus,string>={HAS_DATA:"実績あり",ZERO_ACTIVITY:"対象期間実績なし",NO_DATA:"データなし"};
+const comparisonJa:Record<ComparisonStatus,string>={COMPARABLE:"比較可能",INSUFFICIENT_BASELINE:"比較不能"};
+function platformSituation(output:DashboardOutput,section:"YouTube"|"Threads"):string{const weekly=currentWeekly(output,section.toLowerCase()),views=row(output,section,section==="YouTube"?"今週の再生数":"今週の閲覧数")?.value,posts=weekly?.postsPublished;if(!weekly||weekly.collectionStatus==="NO_DATA")return`${section}は対象期間の収集記録がありません。`;if(weekly.collectionStatus==="FAILED")return`${section}は対象期間のデータ取得に失敗しています。`;if(weekly.collectionStatus==="PARTIAL")return`${section}は対象期間の収集が一部のみ成功しています。`;if(weekly.collectionStatus==="STALE")return`${section}は最新データの更新待ちです。`;if(weekly.activityStatus==="ZERO_ACTIVITY")return`${section}は正常に取得できていますが、対象期間内の新規投稿・${section==="YouTube"?"再生":"閲覧"}実績はありません。`;if(weekly.activityStatus==="HAS_DATA")return`${section}は正常に取得できており、対象期間内に${(posts??0).toLocaleString("ja-JP")}投稿、${(views??0).toLocaleString("ja-JP")}${section==="YouTube"?"再生":"閲覧"}を確認しています。`;return`${section}の収集は正常ですが、対象期間の実績データがありません。`;}
 function platformLines(output: DashboardOutput, section: "YouTube" | "Threads"): ReportLine[] {
   const youtube = section === "YouTube", current = row(output, section, youtube ? "今週の再生数" : "今週の閲覧数"), previous = row(output, section, youtube ? "先週の再生数" : "先週の閲覧数"), comparison = row(output, section, "前週比");
   const weekly = currentWeekly(output, section.toLowerCase()), candidate = top(output, section.toLowerCase() as "youtube" | "threads"), best = candidate && candidate.views > 0 ? candidate : undefined, assessment = platformAssessment(output, section);
   const lines: ReportLine[] = [{ kind: "heading", text: section }, { kind: "body", text: `今週の${youtube ? "再生数" : "閲覧数"}：${display(current, "回")}` }, { kind: "body", text: `先週同期間：${display(previous, "回")}` }, { kind: "body", text: `前週比：${comparison?.display ?? "比較不能"}` }, { kind: "spacer", text: "" }, { kind: "body", text: `今週の投稿数：${weekly?.postsPublished === null || weekly?.postsPublished === undefined ? "未取得" : `${weekly.postsPublished.toLocaleString("ja-JP")}本`}` }, { kind: "spacer", text: "" }];
   if (best) lines.push({ kind: "body", text: `最も${youtube ? "再生された動画" : "閲覧された投稿"}：` }, { kind: "body", text: `「${truncateTitle(best.title)}」` }, { kind: "body", text: `${best.views.toLocaleString("ja-JP")}回` });
   else lines.push({ kind: "body", text: youtube ? "ランキングを作成できる有効な再生データがまだありません" : "ランキングを作成できる有効な閲覧データがまだありません" });
-  lines.push({ kind: "spacer", text: "" }, { kind: "body", text: `判定：${assessment.verdict}` }, { kind: "spacer", text: "" });
+  lines.push({ kind: "spacer", text: "" }, { kind: "body", text: `取得状態：${collectionJa[weekly?.collectionStatus??"NO_DATA"]}` },{kind:"body",text:`実績状態：${activityJa[weekly?.activityStatus??"NO_DATA"]}`},{kind:"body",text:`前週比較：${comparisonJa[weekly?.comparisonStatus??"INSUFFICIENT_BASELINE"]}`},{ kind: "spacer", text: "" });
   return lines;
 }
 
@@ -61,7 +65,7 @@ export function generateReport(output: DashboardOutput): ReportDocument {
     { kind: "title", text: "Creator Metrics｜週次レポート" }, { kind: "spacer", text: "" },
     { kind: "meta", text: `対象期間：${periodStart ? `${jaDate(periodStart)}〜${jaDate(periodEnd)}` : "データなし"}` },
     { kind: "meta", text: `最終更新：${jaDateTime(generatedAt)}` }, { kind: "spacer", text: "" },
-    { kind: "heading", text: "全体状況" }, { kind: "body", text: `YouTubeは${youtube.sentence}` }, { kind: "body", text: `Threadsは${threads.sentence}` }, { kind: "body", text: noteSituation }, { kind: "body", text: rakutenSituation }, { kind: "spacer", text: "" },
+    { kind: "heading", text: "全体状況" }, { kind: "body", text: platformSituation(output,"YouTube") }, { kind: "body", text: platformSituation(output,"Threads") }, { kind: "body", text: noteSituation }, { kind: "body", text: rakutenSituation }, { kind: "spacer", text: "" },
     ...platformLines(output, "YouTube"), ...platformLines(output, "Threads"),
     { kind: "heading", text: "収益" }, { kind: "body", text: "note" }, { kind: "body", text: `今月売上：${display(noteSales, "円")}` }, { kind: "body", text: `販売件数：${display(noteCount, "件")}` }, ...(noteSales?.quality !== "OK" && noteLatestNet?.quality === "OK" && noteLatestNet.value !== null ? [{ kind: "body" as const, text: `直近実績：${noteLatestMonth?.display?.replace(/^(\d{4})-(\d{2})$/, (_, year, value) => `${year}年${Number(value)}月`) ?? "データなし"}` }, { kind: "body" as const, text: `手数料控除後売上：${noteLatestNet.value.toLocaleString("ja-JP")}円` }] : []), { kind: "spacer", text: "" },
     { kind: "body", text: "楽天" }, { kind: "body", text: `今月売上金額：${display(rakutenSales, "円")}` }, { kind: "body", text: `今月成果報酬：${display(rakutenCommission, "円")}` }, { kind: "body", text: `確定報酬：${display(confirmed, "円")}` }, { kind: "body", text: `未確定報酬：${display(unconfirmed, "円")}` }, { kind: "body", text: `破棄報酬：${display(discarded, "円")}` }, { kind: "spacer", text: "" },

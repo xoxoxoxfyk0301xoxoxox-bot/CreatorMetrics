@@ -205,6 +205,8 @@ CSV Importでは`SalesMetrics`、`Transactions`、`CommissionPayments`を必要�
 
 Data Qualityは `OK`、`NO_DATA`、`NOT_SUPPORTED`、`INSUFFICIENT_BASELINE`、`STALE`、`PARTIAL` を保持します。空欄・未取得・非対応を数値0へ変換しません。Dashboardではそれぞれ「データなし」「未対応」「比較データ不足」「更新待ち」「一部データ」と表示します。
 
+媒体全体の判定ではData Qualityを収集成功の意味に流用せず、`collectionStatus`（OK/PARTIAL/FAILED/STALE/NO_DATA）、`activityStatus`（HAS_DATA/ZERO_ACTIVITY/NO_DATA）、`comparisonStatus`（COMPARABLE/INSUFFICIENT_BASELINE）の3軸を`WeeklySummary`へ保存します。投稿数・再生数が正常値0の場合は収集失敗ではなく`ZERO_ACTIVITY`です。前週baseline不足も対象期間実績とは独立して扱います。YouTubeの日次Analytics行が空でも動画別period行が保存されている場合、週次views/likes/comments/sharesはそのperiod行から安全に集計します。
+
 ### Metric semantics
 
 | 媒体 | データ | 意味 | 集計方法 |

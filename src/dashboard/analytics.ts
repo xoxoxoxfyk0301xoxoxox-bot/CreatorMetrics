@@ -1,6 +1,6 @@
 import type { ContentMetricRecord, DailyMetricRecord, SalesMetricRecord, TransactionRecord } from "../types.js";
 import { addDays, comparisonPeriods, dateInTokyo, datesInRange, mondayOf, monthOf, normalizeYearMonth, sundayOf } from "./date.js";
-import type { DashboardOutput, DashboardRow, DataQuality, MetricValue, PeriodRange, RawDashboardData, TopContentRecord, WeeklySummaryRecord } from "./types.js";
+import type { ActivityStatus, CollectionStatus, ComparisonStatus, DashboardOutput, DashboardRow, DataQuality, MetricValue, PeriodRange, RawDashboardData, TopContentRecord, WeeklySummaryRecord } from "./types.js";
 import { calculateFreshness } from "./freshness.js";
 
 export const METRIC_SEMANTICS = {
@@ -30,6 +30,10 @@ function aggregateDaily(rows: DailyMetricRecord[], platform: string, range: Peri
   const covered = new Set(values.map((row) => row.date));
   return supported(values.reduce((sum, row) => sum + row.metrics[metric]!, 0), coverageQuality(range, covered));
 }
+function aggregateContentPeriod(rows:ContentMetricRecord[],platform:string,range:PeriodRange,metric:"views"|"likes"|"comments"|"shares"):MetricValue{const relevant=rows.filter(row=>row.platform===platform&&row.date>=range.start&&row.date<=range.end);if(!relevant.length)return missing("NO_DATA");return supported(relevant.reduce((sum,row)=>sum+row[metric],0),coverageQuality(range,new Set(relevant.map(row=>row.date))));}
+function collectionStatus(data:RawDashboardData,platform:string,range:PeriodRange):CollectionStatus{const all=data.collectionActivity.filter(row=>row.platform===platform).sort((a,b)=>a.finishedAt.localeCompare(b.finishedAt)),latestByDate=new Map<string,(typeof all)[number]>();for(const row of all)latestByDate.set(row.date,row);const expected=datesInRange(range),relevant=expected.map(date=>latestByDate.get(date)).filter((row):row is (typeof all)[number]=>Boolean(row));if(!relevant.length)return all.length?"STALE":"NO_DATA";const success=relevant.filter(row=>row.status==="success").length,failed=relevant.length-success;if(failed&&success)return"PARTIAL";if(failed&&!success)return"FAILED";if(relevant.length<expected.length)return relevant.map(row=>row.date).sort().at(-1)!<range.end?"STALE":"PARTIAL";return"OK";}
+function activityStatus(primary:MetricValue,posts:MetricValue):ActivityStatus{if((primary.value??0)>0||(posts.value??0)>0)return"HAS_DATA";if(primary.value===0||posts.value===0)return"ZERO_ACTIVITY";return"NO_DATA";}
+const comparisonStatus=(previous:MetricValue):ComparisonStatus=>previous.value===null?"INSUFFICIENT_BASELINE":"COMPARABLE";
 function postsPublished(content: ContentMetricRecord[], platform: string, range: PeriodRange): MetricValue {
   const relevant = content.filter((row) => row.platform === platform);
   if (!relevant.length) return missing("NO_DATA");
@@ -73,7 +77,7 @@ function weeklyForPlatform(data: RawDashboardData, platform: string, range: Peri
   const notSupported = missing("NOT_SUPPORTED");
   const metric = (name: string): MetricValue => {
     if (platform === "youtube") {
-      if (["views", "likes", "comments", "shares"].includes(name)) return aggregateDaily(data.daily, platform, range, name);
+      if (["views", "likes", "comments", "shares"].includes(name)){const daily=aggregateDaily(data.daily,platform,range,name);return daily.value===null?aggregateContentPeriod(data.content,platform,range,name as "views"|"likes"|"comments"|"shares"):daily;}
       return notSupported;
     }
     if (platform === "threads") {
@@ -86,7 +90,7 @@ function weeklyForPlatform(data: RawDashboardData, platform: string, range: Peri
   };
   const values = { views: metric("views"), likes: metric("likes"), comments: metric("comments"), replies: metric("replies"), reposts: metric("reposts"), shares: metric("shares"), clicks: metric("clicks"), orders: metric("orders"), grossSales: metric("grossSales"), commission: metric("commission"), postsPublished: platform === "youtube" || platform === "threads" ? postsPublished(data.content, platform, range) : notSupported };
   const quality = Object.fromEntries(Object.entries(values).map(([key, value]) => [key, value.quality]));
-  return { key: `${range.start}|${platform}`, weekStart: range.start, weekEnd: range.end, platform, views: values.views.value, likes: values.likes.value, comments: values.comments.value, replies: values.replies.value, reposts: values.reposts.value, shares: values.shares.value, clicks: values.clicks.value, orders: values.orders.value, grossSales: values.grossSales.value, commission: values.commission.value, postsPublished: values.postsPublished.value, previousPeriodValue: null, changeRate: null, changeLabel: "比較不能", overallQuality: worst(Object.values(quality)), quality, generatedAt };
+  return { key: `${range.start}|${platform}`, weekStart: range.start, weekEnd: range.end, platform, views: values.views.value, likes: values.likes.value, comments: values.comments.value, replies: values.replies.value, reposts: values.reposts.value, shares: values.shares.value, clicks: values.clicks.value, orders: values.orders.value, grossSales: values.grossSales.value, commission: values.commission.value, postsPublished: values.postsPublished.value, previousPeriodValue: null, changeRate: null, changeLabel: "比較不能", overallQuality: worst(Object.values(quality)), quality,collectionStatus:platform==="youtube"||platform==="threads"?collectionStatus(data,platform,range):"NO_DATA",activityStatus:activityStatus(values.views,values.postsPublished),comparisonStatus:"INSUFFICIENT_BASELINE",generatedAt };
 }
 
 function buildWeekly(data: RawDashboardData, asOf: string, generatedAt: string): WeeklySummaryRecord[] {
@@ -102,7 +106,7 @@ function buildWeekly(data: RawDashboardData, asOf: string, generatedAt: string):
     const primary = row.platform === "youtube" || row.platform === "threads" ? { value: row.views, quality: row.quality.views! } : row.platform === "rakuten_affiliate" ? { value: row.grossSales, quality: row.quality.grossSales! } : missing("NOT_SUPPORTED");
     const previousPrimary = previous.platform === "youtube" || previous.platform === "threads" ? { value: previous.views, quality: previous.quality.views! } : previous.platform === "rakuten_affiliate" ? { value: previous.grossSales, quality: previous.quality.grossSales! } : missing("NOT_SUPPORTED");
     const comparison = change(primary, previousPrimary);
-    row.previousPeriodValue = previousPrimary.value; row.changeRate = comparison.value; row.changeLabel = comparison.label;
+    row.previousPeriodValue = previousPrimary.value; row.changeRate = comparison.value; row.changeLabel = comparison.label;row.comparisonStatus=comparisonStatus(previousPrimary);
   }
   return rows;
 }
@@ -159,7 +163,7 @@ function buildDashboard(data: RawDashboardData, asOf: string, generatedAt: strin
   const freshness = calculateFreshness(data, asOf);
   const rows: DashboardRow[] = [{ section: "概要", metric: "最終更新", value: null, display: asOf, quality: "OK", period: asOf, generatedAt }];
   for (const platform of ["youtube", "threads"] as const) {
-    const label = platform === "youtube" ? "YouTube" : "Threads", views = aggregateDaily(data.daily, platform, current, "views"), previousViews = aggregateDaily(data.daily, platform, previous, "views"), comparison = change(views, previousViews);
+    const label = platform === "youtube" ? "YouTube" : "Threads",dailyViews=aggregateDaily(data.daily,platform,current,"views"),views=platform==="youtube"&&dailyViews.value===null?aggregateContentPeriod(data.content,platform,current,"views"):dailyViews,previousDaily=aggregateDaily(data.daily,platform,previous,"views"),previousViews=platform==="youtube"&&previousDaily.value===null?aggregateContentPeriod(data.content,platform,previous,"views"):previousDaily, comparison = change(views, previousViews),posts=postsPublished(data.content,platform,current),collection=collectionStatus(data,platform,current),activity=activityStatus(views,posts),comparisonState=comparisonStatus(previousViews);
     rows.push({ section: label, metric: "最終データ更新", value: null, display: freshness[platform].display, quality: freshness[platform].quality, period: freshness[platform].value ?? "", generatedAt });
     rows.push(dashboardRow(label, platform === "youtube" ? "今週の再生数" : "今週の閲覧数", views, `${current.start}〜${current.end}`, generatedAt));
     rows.push(dashboardRow(label, platform === "youtube" ? "先週の再生数" : "先週の閲覧数", previousViews, `${previous.start}〜${previous.end}`, generatedAt));
@@ -167,7 +171,9 @@ function buildDashboard(data: RawDashboardData, asOf: string, generatedAt: strin
     rows.push(dashboardRow(label, "今週のいいね", aggregateDaily(data.daily, platform, current, "likes"), `${current.start}〜${current.end}`, generatedAt));
     rows.push(dashboardRow(label, platform === "youtube" ? "今週のコメント" : "今週の返信", aggregateDaily(data.daily, platform, current, platform === "youtube" ? "comments" : "replies"), `${current.start}〜${current.end}`, generatedAt));
     if (platform === "threads") rows.push(dashboardRow(label, "今週のリポスト", aggregateDaily(data.daily, platform, current, "reposts"), `${current.start}〜${current.end}`, generatedAt));
-    rows.push(dashboardRow(label, "投稿本数", postsPublished(data.content, platform, current), `${current.start}〜${current.end}`, generatedAt));
+    rows.push(dashboardRow(label, "投稿本数", posts, `${current.start}〜${current.end}`, generatedAt));
+    const collectionJa:Record<CollectionStatus,string>={OK:"正常",PARTIAL:"一部取得",FAILED:"取得失敗",STALE:"更新待ち",NO_DATA:"データなし"},activityJa:Record<ActivityStatus,string>={HAS_DATA:"実績あり",ZERO_ACTIVITY:"対象期間実績なし",NO_DATA:"データなし"},comparisonJa:Record<ComparisonStatus,string>={COMPARABLE:"比較可能",INSUFFICIENT_BASELINE:"比較不能"};
+    rows.push({section:label,metric:"取得状態",value:null,display:collectionJa[collection],quality:collection==="OK"?"OK":collection==="PARTIAL"?"PARTIAL":collection==="STALE"?"STALE":"NO_DATA",period:`${current.start}〜${current.end}`,generatedAt},{section:label,metric:"実績状態",value:null,display:activityJa[activity],quality:activity==="NO_DATA"?"NO_DATA":"OK",period:`${current.start}〜${current.end}`,generatedAt},{section:label,metric:"前週比較状態",value:null,display:comparisonJa[comparisonState],quality:comparisonState==="COMPARABLE"?"OK":"INSUFFICIENT_BASELINE",period:`${previous.start}〜${previous.end}`,generatedAt});
   }
   const noteCurrent = monthMetric(data.sales, "note", "note_sales_summary", month, "grossSales"), notePrevious = monthMetric(data.sales, "note", "note_sales_summary", previousMonth, "grossSales"), noteChange = change(noteCurrent, notePrevious);
   const noteLatest = latestNoteSales(data.sales, month);
