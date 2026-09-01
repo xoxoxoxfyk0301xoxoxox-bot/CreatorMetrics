@@ -25,7 +25,7 @@ import { generateReport } from "./report/generator.js";
 import { runReport } from "./report/index.js";
 import { GoogleSheetsReportStore } from "./report/google-sheets.js";
 import { GoogleSheetsPostStore } from "./posting/google-sheets.js";
-import { ThreadsPostService } from "./posting/service.js";
+import { formatImportErrorDetails, ThreadsPostService } from "./posting/service.js";
 import { readPostCandidates } from "./posting/batch.js";
 import { loadContentStrategy } from "./content-ai/strategy.js";
 import { OpenAIContentProvider } from "./content-ai/openai-provider.js";
@@ -34,6 +34,7 @@ import { ThreadsContentService } from "./content-ai/service.js";
 import { createNoCallProvider } from "./content-ai/dry-provider.js";
 import { GoogleSheetsPostingDashboardStore } from "./posting-dashboard/google-sheets.js";
 import { runPostingDashboard } from "./posting-dashboard/index.js";
+import { inferPostingSlot, jstDateTime, POSTING_TIME_RULE } from "./posting/time-windows.js";
 
 type SelectedPlatform = "youtube" | "pinterest" | "threads";
 
@@ -201,13 +202,14 @@ async function posting(command: string): Promise<void> {
   if (needsApi) { const threads = loadThreadsConfig(); api = new ThreadsClient(await refreshThreadsTokenIfNeeded(threads), threads.baseUrl); }
   const service = new ThreadsPostService(store, api, () => new Date(), store);
   if (command === "post:threads:add") { const post = await service.addDraft(cliOption("text"), process.argv.includes("--notes") ? cliOption("notes") : ""); console.log(`postId=${post.postId} status=${post.status}${post.notes.includes("NEAR_DUPLICATE") ? " nearDuplicate=true" : ""}`); }
-  else if (command === "post:threads:import") { const result=await service.importCandidates(await readPostCandidates(cliOption("file")));console.log(`Threads 投稿候補インポート\n\n読込：${result.read}件\nDRAFT：${result.draft}件\nREVIEW：${result.review}件\n重複スキップ：${result.duplicate}件\nエラー：${result.errors}件\n\nGoogle Sheets:\nPostQueue 更新完了`); }
+  else if (command === "post:threads:import") { const result=await service.importCandidates(await readPostCandidates(cliOption("file")));console.log(`Threads 投稿候補インポート\n\n読込：${result.read}件\nDRAFT：${result.draft}件\nREVIEW：${result.review}件\n重複スキップ：${result.duplicate}件\nエラー：${result.errors}件${formatImportErrorDetails(result.errorDetails)}\n\nGoogle Sheets:\nPostQueue 更新完了`); }
+  else if(command==="post:threads:cleanup-import-duplicates"){const apply=process.argv.includes("--apply"),dryRun=process.argv.includes("--dry-run");if(apply===dryRun)throw new Error("Specify exactly one of --dry-run or --apply");const result=await service.cleanupImportDuplicates(apply);console.log(`Threads Import重複Cleanup ${apply?"APPLY":"DRY-RUN"}\n\n対象source: import\n対象status: DRAFT/REVIEW\n走査：${result.scanned}件\n重複グループ：${result.duplicateGroups}件\n対象：${result.targets.length}件`);for(const target of result.targets)console.log(`- postId=${target.postId} status=${target.status} createdAt=${target.createdAt} keptPostId=${target.keptPostId}`);if(!apply)console.log("\n変更なし（dry-run）");}
   else if (command === "post:threads:list") { const filter=process.argv.includes("--status")?cliOption("status"):"";let index=0;for (const post of (await service.list()).filter(p=>!filter||p.status===filter)){index++;console.log(`${index}. postId=${post.postId} status=${post.status} scheduledAt=${post.scheduledAt || "-"} preview=${JSON.stringify(post.content.slice(0, 80))} warning=${post.notes.includes("NEAR_DUPLICATE")?"NEAR_DUPLICATE":"-"} notes=${JSON.stringify(post.notes)}`);} }
   else if (command === "post:threads:review") console.log(`status=${(await service.review(cliOption("id"))).status}`);
   else if (command === "post:threads:approve") console.log(`status=${(await service.approve(cliOption("id"))).status}`);
   else if (command === "post:threads:approve-all") {const ids=process.argv.includes("--ids")?cliOption("ids").split(",").map(x=>x.trim()).filter(Boolean):undefined;const approved=await service.approveAll(ids?{ids}:{status:(process.argv.includes("--status")?cliOption("status"):"DRAFT") as import("./posting/types.js").PostStatus});console.log(`approved=${approved.length}`);}
   else if (command === "post:threads:schedule") console.log(`status=${(await service.schedule(cliOption("id"), cliOption("at"))).status}`);
-  else if (command === "post:threads:schedule-imported") console.log(`scheduled=${(await service.scheduleImported()).length}`);
+  else if (command === "post:threads:schedule-imported") {const jitter=process.argv.includes("--jitter"),dryRun=process.argv.includes("--dry-run");if(dryRun&&!jitter)throw new Error("--dry-run requires --jitter");const scheduled=await service.scheduleImported({jitter,dryRun});if(jitter&&dryRun){console.log("Threads Jitter Schedule DRY-RUN\n");let currentDate="";for(const post of scheduled){const {date,time}=jstDateTime(post.scheduledAt),slot=inferPostingSlot(post.scheduledAt);if(date!==currentDate){if(currentDate)console.log("");console.log(date);currentDate=date;}console.log(`${POSTING_TIME_RULE.windows[slot].label} ${time}`);}console.log(`\n対象：${scheduled.length}件\n変更なし（dry-run）`);}else console.log(`scheduled=${scheduled.length}`);}
   else if (command === "post:threads:schedule-batch") console.log(`scheduled=${(await service.scheduleBatch(cliOption("start"),cliOption("times").split(",").map(x=>x.trim()))).length}`);
   else if (command === "post:threads:cancel") console.log(`status=${(await service.cancel(cliOption("id"))).status}`);
   else if (command === "post:threads:dry-run") { const result = await service.dryRun(cliOption("id")); console.log(JSON.stringify(result, null, 2)); }

@@ -88,7 +88,11 @@ npm run post:threads:due
 npm run post:threads:cancel -- --id POST_ID
 ```
 
-Phase 2ではUTF-8（BOM可）のCSVまたはJSON配列から候補を一括登録できます。CSVヘッダーとJSON fieldは`content,scheduledAt,notes`だけを使用し、CSVの引用符内改行にも対応します。1行の不備で他の行は停止しません。インポート時は承認・予約を行わず、完全重複は`SKIPPED_DUPLICATE`、類似候補は`REVIEW`、それ以外は`DRAFT`になります。
+Phase 2ではUTF-8（BOM可）のCSVまたはJSON配列から候補を一括登録できます。CSVヘッダーとJSON fieldは`content,scheduledAt,notes`だけを使用し、CSVの引用符内改行にも対応します。1行の不備で他の行は停止しません。インポート時は承認・予約を行わず、既存Queueまたは同一CSV内の完全一致は新規行を作らず重複スキップとして集計し、類似候補は`REVIEW`、それ以外は`DRAFT`になります。ImportはPostQueueを一度だけ読み、作成行をバッチ追記します。
+
+過去の再Importで作成された重複候補は、まず`npm run post:threads:cleanup-import-duplicates -- --dry-run`で確認できます。対象は`source=import`かつ`DRAFT/REVIEW`の完全一致だけで、最古の行を残します。明示的な`--apply`実行時も後発行を削除せず`CANCELLED`へ変更し、APPROVED/SCHEDULED/PUBLISHEDには触れません。
+
+Threadsの標準投稿時間はAsia/Tokyoで、朝07:40〜08:20、昼11:40〜12:30、夜22:30〜23:30（寝かしつけ後）です。固定時刻ではなく、日付・slot・postIdから再現可能なdeterministic jitterを生成します。既存CSVの08:00・12:00・21:00はそれぞれ朝・昼・夜のslot指定として扱えます。適用前は`npm run post:threads:schedule-imported -- --jitter --dry-run`で確認し、`--dry-run`を外した場合だけAPPROVED行をbatch更新します。従来のjitterなし`npm run post:threads:schedule-imported`も互換性のため維持しています。
 
 ```bash
 cp data/posts/threads-posts.csv.example data/posts/threads-posts.csv

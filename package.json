@@ -37,6 +37,7 @@
     "post:threads:publish": "tsx src/cli.ts post:threads:publish",
     "post:threads:due": "tsx src/cli.ts post:threads:due",
     "post:threads:import": "tsx src/cli.ts post:threads:import",
+    "post:threads:cleanup-import-duplicates": "tsx src/cli.ts post:threads:cleanup-import-duplicates",
     "post:threads:approve-all": "tsx src/cli.ts post:threads:approve-all",
     "post:threads:schedule-imported": "tsx src/cli.ts post:threads:schedule-imported",
     "post:threads:schedule-batch": "tsx src/cli.ts post:threads:schedule-batch",
