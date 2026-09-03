@@ -5,8 +5,10 @@ export function addDays(value: string, days: number): string { const date = utcD
 export function mondayOf(value: string): string { const day = utcDate(value).getUTCDay(); return addDays(value, -(day === 0 ? 6 : day - 1)); }
 export function sundayOf(value: string): string { return addDays(mondayOf(value), 6); }
 export function comparisonPeriods(asOf: string): { current: PeriodRange; previous: PeriodRange } {
-  const current = { start: mondayOf(asOf), end: asOf };
-  return { current, previous: { start: addDays(current.start, -7), end: addDays(asOf, -7) } };
+  return {
+    current: { start: addDays(asOf, -6), end: asOf },
+    previous: { start: addDays(asOf, -13), end: addDays(asOf, -7) }
+  };
 }
 export function datesInRange(range: PeriodRange): string[] { const values: string[] = []; for (let value = range.start; value <= range.end; value = addDays(value, 1)) values.push(value); return values; }
 export function monthOf(value: string): string { return value.slice(0, 7); }

@@ -14,11 +14,8 @@ const metric = (value: number | null, quality: MetricValue["quality"] = "OK"): M
 const collectionLog=(date:string,platform:string,status="success")=>({date,platform,status,dailyMetricsCount:1,contentMetricsCount:1,writtenDaily:1,writtenContent:1,reason:"",errorCode:"",finishedAt:`${date}T10:00:00Z`});
 
 describe("dashboard period and quality rules", () => {
-  it("compares the current partial week with the same weekdays last week", () => {
-    expect(comparisonPeriods("2026-08-26")).toEqual({ current: { start: "2026-08-24", end: "2026-08-26" }, previous: { start: "2026-08-17", end: "2026-08-19" } });
-  });
-  it("uses complete Monday-Sunday periods on Sunday", () => {
-    expect(comparisonPeriods("2026-08-30")).toEqual({ current: { start: "2026-08-24", end: "2026-08-30" }, previous: { start: "2026-08-17", end: "2026-08-23" } });
+  it("uses adjacent rolling seven-day periods", () => {
+    expect(comparisonPeriods("2026-09-02")).toEqual({ current: { start: "2026-08-27", end: "2026-09-02" }, previous: { start: "2026-08-20", end: "2026-08-26" } });
   });
   it("handles zero comparison without Infinity", () => {
     expect(change(metric(3), metric(0))).toMatchObject({ value: null, label: "NEW" });
@@ -29,9 +26,9 @@ describe("dashboard period and quality rules", () => {
     const data = empty();
     data.daily.push(daily("2026-08-24", "youtube", { views: 0, likes: 0, comments: 0, shares: 0 }));
     const output = generateDashboard(data, "2026-08-26", collectedAt);
-    const youtubeViews = output.dashboard.find((row) => row.section === "YouTube" && row.metric === "今週の再生数");
+    const youtubeViews = output.dashboard.find((row) => row.section === "YouTube" && row.metric === "直近7日間の再生数");
     const noteSales = output.dashboard.find((row) => row.section === "note" && row.metric === "今月売上");
-    const noteWeekly = output.weekly.find((row) => row.weekStart === "2026-08-24" && row.platform === "note");
+    const noteWeekly = output.weekly.find((row) => row.weekStart === "2026-08-20" && row.platform === "note");
     expect(youtubeViews).toMatchObject({ value: 0, display: "0", quality: "STALE" });
     expect(noteSales).toMatchObject({ value: null, display: "データなし", quality: "NO_DATA" });
     expect(noteWeekly?.quality.views).toBe("NOT_SUPPORTED");
@@ -58,10 +55,10 @@ describe("dashboard period and quality rules", () => {
 describe("snapshot and revenue aggregation", () => {
   it("does not sum Threads lifetime snapshots and requires a baseline", () => {
     const data = empty();
-    data.content.push(content("2026-08-23", "threads", "t1", { views: 100, likes: 10 }), content("2026-08-25", "threads", "t1", { views: 120, likes: 12 }), content("2026-08-26", "threads", "t1", { views: 140, likes: 14 }));
+    data.content.push(content("2026-08-19", "threads", "t1", { views: 100, likes: 10 }), content("2026-08-25", "threads", "t1", { views: 120, likes: 12 }), content("2026-08-26", "threads", "t1", { views: 140, likes: 14 }));
     let output = generateDashboard(data, "2026-08-26", collectedAt);
     expect(output.topContent.find((row) => row.platform === "threads")?.views).toBe(40);
-    data.content = data.content.filter((row) => row.date !== "2026-08-23");
+    data.content = data.content.filter((row) => row.date !== "2026-08-19");
     output = generateDashboard(data, "2026-08-26", collectedAt);
     expect(output.topContent.filter((row) => row.platform === "threads")).toHaveLength(0);
   });
@@ -82,11 +79,13 @@ describe("snapshot and revenue aggregation", () => {
 });
 
 describe("collection, activity and comparison status axes",()=>{
-  it("treats successful YouTube zero activity as collected, not partial",()=>{const data=empty();data.daily.push(daily("2026-08-31","youtube",{channelViewCount:100,subscriberCount:1,videoCount:1}));data.content.push(content("2026-08-31","youtube","y1"));data.collectionActivity.push(collectionLog("2026-08-31","youtube"));const row=generateDashboard(data,"2026-08-31",collectedAt).weekly.find(item=>item.platform==="youtube"&&item.weekStart==="2026-08-31")!;expect(row).toMatchObject({views:0,postsPublished:0,collectionStatus:"OK",activityStatus:"ZERO_ACTIVITY",comparisonStatus:"INSUFFICIENT_BASELINE"});});
-  it("treats successful YouTube actual period data as activity",()=>{const data=empty();data.content.push(content("2026-08-31","youtube","y1",{views:20}));data.collectionActivity.push(collectionLog("2026-08-31","youtube"));expect(generateDashboard(data,"2026-08-31",collectedAt).weekly.find(item=>item.platform==="youtube"&&item.weekStart==="2026-08-31")).toMatchObject({views:20,collectionStatus:"OK",activityStatus:"HAS_DATA"});});
-  it("separates partial and failed collection from activity",()=>{const partial=empty();partial.daily.push(daily("2026-08-31","youtube",{views:1}),daily("2026-09-01","youtube",{views:1}));partial.collectionActivity.push(collectionLog("2026-08-31","youtube"),collectionLog("2026-09-01","youtube","failed"));expect(generateDashboard(partial,"2026-09-01",collectedAt).weekly.find(item=>item.platform==="youtube"&&item.weekStart==="2026-08-31")?.collectionStatus).toBe("PARTIAL");const failed=empty();failed.collectionActivity.push(collectionLog("2026-08-31","youtube","failed"));expect(generateDashboard(failed,"2026-08-31",collectedAt).weekly.find(item=>item.platform==="youtube"&&item.weekStart==="2026-08-31")?.collectionStatus).toBe("FAILED");});
-  it("recognizes Threads 48 views and 3 posts while keeping missing baseline separate",()=>{const data=empty();data.daily.push(daily("2026-08-31","threads",{views:48,likes:1,replies:0,reposts:0}));for(let index=0;index<3;index++){data.content.push(content("2026-08-30","threads",`t${index}`,{views:10,publishedAt:"2026-08-31T01:00:00Z"}),content("2026-08-31","threads",`t${index}`,{views:16+index,publishedAt:"2026-08-31T01:00:00Z"}));}data.collectionActivity.push(collectionLog("2026-08-31","threads"));const output=generateDashboard(data,"2026-08-31",collectedAt),row=output.weekly.find(item=>item.platform==="threads"&&item.weekStart==="2026-08-31")!;expect(row).toMatchObject({views:48,postsPublished:3,collectionStatus:"OK",activityStatus:"HAS_DATA",comparisonStatus:"INSUFFICIENT_BASELINE"});expect(output.topContent.filter(item=>item.platform==="threads").length).toBeGreaterThan(0);});
-  it("keeps successful Threads zero activity distinct from no data",()=>{const data=empty();data.daily.push(daily("2026-08-31","threads",{views:0,likes:0,replies:0,reposts:0}));data.content.push(content("2026-08-31","threads","old",{publishedAt:"2026-08-01T00:00:00Z"}));data.collectionActivity.push(collectionLog("2026-08-31","threads"));expect(generateDashboard(data,"2026-08-31",collectedAt).weekly.find(item=>item.platform==="threads"&&item.weekStart==="2026-08-31")).toMatchObject({collectionStatus:"OK",activityStatus:"ZERO_ACTIVITY"});});
+  it("does not treat incomplete coverage with zero values as verified zero",()=>{const data=empty();data.daily.push(daily("2026-09-02","youtube",{views:0}));data.content.push(content("2026-09-02","youtube","y1"));data.collectionActivity.push(collectionLog("2026-09-02","youtube"));const row=generateDashboard(data,"2026-09-02",collectedAt).weekly.find(item=>item.platform==="youtube"&&item.weekStart==="2026-08-27")!;expect(row).toMatchObject({views:0,collectionStatus:"PARTIAL",activityStatus:"NO_DATA"});});
+  it("treats fully covered successful YouTube zero activity as collected",()=>{const data=empty();for(const date of ["2026-08-27","2026-08-28","2026-08-29","2026-08-30","2026-08-31","2026-09-01","2026-09-02"]){data.daily.push(daily(date,"youtube",{views:0}));data.content.push(content(date,"youtube","y1"));data.collectionActivity.push(collectionLog(date,"youtube"));}const row=generateDashboard(data,"2026-09-02",collectedAt).weekly.find(item=>item.platform==="youtube"&&item.weekStart==="2026-08-27")!;expect(row).toMatchObject({views:0,postsPublished:0,collectionStatus:"OK",activityStatus:"ZERO_ACTIVITY",comparisonStatus:"INSUFFICIENT_BASELINE"});});
+  it("sums YouTube rolling seven-day data and keeps the content fallback",()=>{const data=empty();const values=[20,21,22,23,24,25,23];for(const [index,date] of ["2026-08-27","2026-08-28","2026-08-29","2026-08-30","2026-08-31","2026-09-01","2026-09-02"].entries()){data.content.push(content(date,"youtube","y1",{views:values[index]!}));data.collectionActivity.push(collectionLog(date,"youtube"));}const output=generateDashboard(data,"2026-09-02",collectedAt),row=output.weekly.find(item=>item.platform==="youtube"&&item.weekStart==="2026-08-27")!;expect(row).toMatchObject({views:158,collectionStatus:"OK",activityStatus:"HAS_DATA"});expect(output.dashboard.find(item=>item.section==="YouTube"&&item.metric==="直近7日間の再生数")?.value).toBe(158);});
+  it("separates partial and failed collection from activity",()=>{const partial=empty();partial.daily.push(daily("2026-08-31","youtube",{views:1}),daily("2026-09-01","youtube",{views:1}));partial.collectionActivity.push(collectionLog("2026-08-31","youtube"),collectionLog("2026-09-01","youtube","failed"));expect(generateDashboard(partial,"2026-09-01",collectedAt).weekly.find(item=>item.platform==="youtube"&&item.weekStart==="2026-08-26")?.collectionStatus).toBe("PARTIAL");const failed=empty();failed.collectionActivity.push(collectionLog("2026-08-31","youtube","failed"));expect(generateDashboard(failed,"2026-08-31",collectedAt).weekly.find(item=>item.platform==="youtube"&&item.weekStart==="2026-08-25")?.collectionStatus).toBe("FAILED");});
+  it("recognizes Threads 48 views and 3 posts while keeping missing baseline separate",()=>{const data=empty();data.daily.push(daily("2026-08-31","threads",{views:48,likes:1,replies:0,reposts:0}));for(let index=0;index<3;index++){data.content.push(content("2026-08-24","threads",`t${index}`,{views:10,publishedAt:"2026-08-31T01:00:00Z"}),content("2026-08-31","threads",`t${index}`,{views:16+index,publishedAt:"2026-08-31T01:00:00Z"}));}data.collectionActivity.push(collectionLog("2026-08-31","threads"));const output=generateDashboard(data,"2026-08-31",collectedAt),row=output.weekly.find(item=>item.platform==="threads"&&item.weekStart==="2026-08-25")!;expect(row).toMatchObject({views:48,postsPublished:3,collectionStatus:"PARTIAL",activityStatus:"HAS_DATA",comparisonStatus:"INSUFFICIENT_BASELINE"});expect(output.topContent.filter(item=>item.platform==="threads").length).toBeGreaterThan(0);});
+  it("does not call partially covered Threads zero activity verified zero",()=>{const data=empty();data.daily.push(daily("2026-08-31","threads",{views:0,likes:0,replies:0,reposts:0}));data.content.push(content("2026-08-31","threads","old",{publishedAt:"2026-08-01T00:00:00Z"}));data.collectionActivity.push(collectionLog("2026-08-31","threads"));expect(generateDashboard(data,"2026-08-31",collectedAt).weekly.find(item=>item.platform==="threads"&&item.weekStart==="2026-08-25")).toMatchObject({collectionStatus:"PARTIAL",activityStatus:"NO_DATA"});});
+  it("keeps a Threads period metric inside the rolling boundary without summing snapshots",()=>{const data=empty();data.daily.push(daily("2026-08-31","threads",{views:159}));data.content.push(content("2026-08-26","threads","t1",{views:0}),content("2026-08-31","threads","t1",{views:159,publishedAt:"2026-08-31T01:00:00Z"}));const output=generateDashboard(data,"2026-09-02",collectedAt);expect(output.dashboard.find(item=>item.section==="Threads"&&item.metric==="直近7日間の閲覧数")?.value).toBe(159);expect(output.topContent.find(item=>item.platform==="threads")?.views).toBe(159);});
 });
 
 describe("TopContent ranking", () => {

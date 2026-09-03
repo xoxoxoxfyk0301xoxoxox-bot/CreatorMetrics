@@ -11,8 +11,8 @@ function output(options: { youtubeRate?: number | null; youtubeLabel?: string; y
   const rate = options.youtubeRate ?? 0.1, label = options.youtubeLabel ?? "+10.0%", quality = options.youtubeQuality ?? "OK";
   const noteSalesValue = options.noteQuality === "NO_DATA" ? null : 1000;
   const dashboard = [
-    dashboardRow("概要", "最終更新", null, "2026-08-28"), dashboardRow("YouTube", "最終データ更新", null, "2026-08-28"), dashboardRow("YouTube", "今週の再生数", 120, "120"), dashboardRow("YouTube", "先週の再生数", 100, "100"), dashboardRow("YouTube", "前週比", rate, label, quality),
-    dashboardRow("Threads", "最終データ更新", null, "2026-08-28"), dashboardRow("Threads", "今週の閲覧数", 50, "50"), dashboardRow("Threads", "先週の閲覧数", 50, "50"), dashboardRow("Threads", "前週比", 0, "0%"),
+    dashboardRow("概要", "最終更新", null, "2026-08-28"), dashboardRow("YouTube", "最終データ更新", null, "2026-08-28"), dashboardRow("YouTube", "直近7日間の再生数", 120, "120"), dashboardRow("YouTube", "直前7日間の再生数", 100, "100"), dashboardRow("YouTube", "前期間比", rate, label, quality),
+    dashboardRow("Threads", "最終データ更新", null, "2026-08-28"), dashboardRow("Threads", "直近7日間の閲覧数", 50, "50"), dashboardRow("Threads", "直前7日間の閲覧数", 50, "50"), dashboardRow("Threads", "前期間比", 0, "0%"),
     dashboardRow("note", "最終CSV取込", null, "2026-08-28"), dashboardRow("note", "今月売上", noteSalesValue, noteSalesValue === null ? "データなし" : "1,000円", options.noteQuality ?? "OK"), dashboardRow("note", "今月手数料控除後売上", options.noteNet === undefined ? 800 : options.noteNet, options.noteNet === null ? "データなし" : "800円", options.noteQuality ?? "OK"), dashboardRow("note", "直近実績月", null, "2026-06"), dashboardRow("note", "直近手数料控除後売上", 252, "252円"), dashboardRow("note", "販売件数", 2, "2"),
     dashboardRow("楽天アフィリエイト", "最終CSV取込", null, "2026-08-28"), dashboardRow("楽天アフィリエイト", "今月売上金額", 5000, "5,000円"), dashboardRow("楽天アフィリエイト", "今月成果報酬", options.rakutenCommission === undefined ? 200 : options.rakutenCommission, options.rakutenCommission === null ? "データなし" : "200円", options.rakutenQuality ?? "OK"), dashboardRow("楽天アフィリエイト", "確定報酬", 200, "200円"), dashboardRow("楽天アフィリエイト", "未確定報酬", 0, "0円"), dashboardRow("楽天アフィリエイト", "破棄報酬", 0, "0円")
   ];
@@ -37,8 +37,8 @@ describe("report content", () => {
   it("renders TopContent, keeps known zero, and distinguishes null", () => {
     const report = text(output());
     expect(report).toContain("「Top title」");
-    expect(report).toContain("今週の投稿数：0本");
-    expect(report).toContain("今週の投稿数：未取得");
+    expect(report).toContain("直近7日間の投稿数：0本");
+    expect(report).toContain("直近7日間の投稿数：未取得");
   });
   it("explains when TopContent is unavailable", () => expect(text(output({ top: false }))).toContain("ランキングを作成できる有効な再生データがまだありません"));
   it("does not rank zero-view content", () => {
@@ -72,7 +72,8 @@ describe("report content", () => {
     const original = "あ".repeat(100), truncated = truncateTitle(original);
     expect(truncated).toHaveLength(80); expect(truncated.endsWith("…")).toBe(true); expect(original).toHaveLength(100);
   });
-  it("keeps collection, activity and comparison states consistent with visible metrics",()=>{const value=output({top:false}),youtube=value.weekly.find(item=>item.platform==="youtube")!,threads=value.weekly.find(item=>item.platform==="threads")!;Object.assign(youtube,{views:0,postsPublished:0,collectionStatus:"OK",activityStatus:"ZERO_ACTIVITY",comparisonStatus:"INSUFFICIENT_BASELINE"});Object.assign(threads,{views:48,postsPublished:3,collectionStatus:"OK",activityStatus:"HAS_DATA",comparisonStatus:"INSUFFICIENT_BASELINE"});const yt=value.dashboard.find(item=>item.section==="YouTube"&&item.metric==="今週の再生数")!,th=value.dashboard.find(item=>item.section==="Threads"&&item.metric==="今週の閲覧数")!;Object.assign(yt,{value:0,display:"0",quality:"OK"});Object.assign(th,{value:48,display:"48",quality:"OK"});const report=text(value);expect(report).toContain("YouTubeは正常に取得できていますが、対象期間内の新規投稿・再生実績はありません。");expect(report).toContain("Threadsは正常に取得できており、対象期間内に3投稿、48閲覧を確認しています。");expect(report).toContain("取得状態：正常");expect(report).toContain("実績状態：実績あり");expect(report).toContain("前週比較：比較不能");expect(report).not.toContain("Threadsは対象期間のデータがありません。");expect(report).not.toContain("YouTubeは一部データのみ取得できています。");});
+  it("keeps collection, activity and comparison states consistent with visible metrics",()=>{const value=output({top:false}),youtube=value.weekly.find(item=>item.platform==="youtube")!,threads=value.weekly.find(item=>item.platform==="threads")!;Object.assign(youtube,{views:0,postsPublished:0,collectionStatus:"OK",activityStatus:"ZERO_ACTIVITY",comparisonStatus:"INSUFFICIENT_BASELINE"});Object.assign(threads,{views:48,postsPublished:3,collectionStatus:"OK",activityStatus:"HAS_DATA",comparisonStatus:"INSUFFICIENT_BASELINE"});const yt=value.dashboard.find(item=>item.section==="YouTube"&&item.metric==="直近7日間の再生数")!,th=value.dashboard.find(item=>item.section==="Threads"&&item.metric==="直近7日間の閲覧数")!;Object.assign(yt,{value:0,display:"0",quality:"OK"});Object.assign(th,{value:48,display:"48",quality:"OK"});const report=text(value);expect(report).toContain("YouTubeは正常に取得できていますが、対象期間内の新規投稿・再生実績はありません。");expect(report).toContain("Threadsは正常に取得できており、対象期間内に3投稿、48閲覧を確認しています。");expect(report).toContain("取得状態：正常");expect(report).toContain("実績状態：実績あり");expect(report).toContain("前期間比較：比較不能");expect(report).not.toContain("Threadsは対象期間のデータがありません。");expect(report).not.toContain("YouTubeは一部データのみ取得できています。");});
+  it("reports the same rolling seven-day total as Dashboard",()=>{const value=output();const youtube=value.weekly.find(item=>item.platform==="youtube")!;Object.assign(youtube,{weekStart:"2026-08-27",weekEnd:"2026-09-02",views:158});const current=value.dashboard.find(item=>item.section==="YouTube"&&item.metric==="直近7日間の再生数")!;Object.assign(current,{value:158,display:"158",period:"2026-08-27〜2026-09-02"});const report=generateReport(value);expect(report.periodStart).toBe("2026-08-27");expect(report.periodEnd).toBe("2026-09-02");expect(report.lines.map(line=>line.text)).toContain("直近7日間の再生数：158回");});
   it("regenerates Report alone through source and sink", async () => {
     const input = output(), writeReport = vi.fn();
     const result = await runReport({ readDashboardOutput: async () => input }, { writeReport });

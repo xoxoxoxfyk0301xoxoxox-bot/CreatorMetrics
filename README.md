@@ -200,12 +200,14 @@ CSV Importでは`SalesMetrics`、`Transactions`、`CommissionPayments`を必要�
 `npm run dashboard` は既存Raw Sheetを読み取り、収集やCSV Importを実行せず、次の3シートだけを再生成します。基準日は通常Asia/Tokyoの前日で、再現可能な検証には `DASHBOARD_DATE=2026-08-29 npm run dashboard` を使えます。
 
 - `Dashboard`: 日本語の媒体別KPI、比較値、対象期間、Data Quality
-- `WeeklySummary`: 月曜〜日曜の週次集計。実行週は当日まで、前週は同じ曜日までを比較
-- `TopContent`: YouTube / Threadsの今週Top 5。views、engagementRate、publishedAt、contentIdの順で決定
+- `WeeklySummary`: 基準日を含む直近7日間の集計。直前の7日間と比較
+- `TopContent`: YouTube / Threadsの直近7日間Top 5。views、engagementRate、publishedAt、contentIdの順で決定
+
+集計期間はAsia/Tokyoの日付で、current=`asOf - 6日`〜`asOf`、previous=`asOf - 13日`〜`asOf - 7日`です。7日分のcoverageが揃わない数値0は、正常取得済みの実績0とは扱いません。
 
 Data Qualityは `OK`、`NO_DATA`、`NOT_SUPPORTED`、`INSUFFICIENT_BASELINE`、`STALE`、`PARTIAL` を保持します。空欄・未取得・非対応を数値0へ変換しません。Dashboardではそれぞれ「データなし」「未対応」「比較データ不足」「更新待ち」「一部データ」と表示します。
 
-媒体全体の判定ではData Qualityを収集成功の意味に流用せず、`collectionStatus`（OK/PARTIAL/FAILED/STALE/NO_DATA）、`activityStatus`（HAS_DATA/ZERO_ACTIVITY/NO_DATA）、`comparisonStatus`（COMPARABLE/INSUFFICIENT_BASELINE）の3軸を`WeeklySummary`へ保存します。投稿数・再生数が正常値0の場合は収集失敗ではなく`ZERO_ACTIVITY`です。前週baseline不足も対象期間実績とは独立して扱います。YouTubeの日次Analytics行が空でも動画別period行が保存されている場合、週次views/likes/comments/sharesはそのperiod行から安全に集計します。
+媒体全体の判定ではData Qualityを収集成功の意味に流用せず、`collectionStatus`（OK/PARTIAL/FAILED/STALE/NO_DATA）、`activityStatus`（HAS_DATA/ZERO_ACTIVITY/NO_DATA）、`comparisonStatus`（COMPARABLE/INSUFFICIENT_BASELINE）の3軸を`WeeklySummary`へ保存します。投稿数・再生数が正常値0の場合は収集失敗ではなく`ZERO_ACTIVITY`です。直前期間のbaseline不足も対象期間実績とは独立して扱います。YouTubeの日次Analytics行が空でも動画別period行が保存されている場合、週次views/likes/comments/sharesはそのperiod行から安全に集計します。
 
 ### Metric semantics
 
@@ -241,9 +243,9 @@ DashboardにはYouTube／Threadsの最新データ日、note／楽天の最終CS
 
 ## Human-Readable Report
 
-`npm run report`は収集やImportをせず、既存のDashboard、WeeklySummary、TopContentから`Report`シートだけを再生成します。文章は固定ルールによるdeterministicな日本語で、LLMや外部AI APIは使いません。内容は対象期間、全体状況、YouTube、Threads、収益、今週の変化、データ状態です。戦略提案や推測値は生成しません。
+`npm run report`は収集やImportをせず、既存のDashboard、WeeklySummary、TopContentから`Report`シートだけを再生成します。文章は固定ルールによるdeterministicな日本語で、LLMや外部AI APIは使いません。内容は対象期間、全体状況、YouTube、Threads、収益、直近7日間の変化、データ状態です。戦略提案や推測値は生成しません。
 
-YouTube／Threadsの前週同期間比は次の閾値です。Data Qualityが`OK`以外の場合は、数値があってもこの判定よりData Qualityの説明を優先します。
+YouTube／Threadsの直前7日間比は次の閾値です。Data Qualityが`OK`以外の場合は、数値があってもこの判定よりData Qualityの説明を優先します。
 
 - `+20%以上`: 好調
 - `+5%以上 +20%未満`: やや好調
