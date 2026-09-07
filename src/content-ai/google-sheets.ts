@@ -1,5 +1,5 @@
 import { google,type Auth,type sheets_v4 } from "googleapis";
-import type { ContentAIRunLog,ContentLedgerRecord,ContentPlanRecord,ContentStore } from "./types.js";
+import type { ContentAIRunLog,ContentLedgerRecord,ContentPlanRecord,ContentStore,ThreadsPerformanceRecord } from "./types.js";
 const PLAN="ContentPlan",LEDGER="ContentLedger",LOG="ContentAIRunLog";
 const PH=["planId","targetDate","slot","contentPillar","coreTheme","angle","goal","hookIdea","status","generatedPostId","createdAt","updatedAt","notes","regenerationCount"];
 const LH=["contentId","postId","platform","createdAt","publishedAt","status","coreTheme","claim","readerValue","advice","contentPillar","angle","hookType","contentSummary","sourceType","performanceTier","notes"];
@@ -14,5 +14,5 @@ export class GoogleSheetsContentStore implements ContentStore{private sheets:she
  private lv(x:ContentLedgerRecord){return LH.map(k=>x[k as keyof ContentLedgerRecord]??"");}
  async upsertLedger(x:ContentLedgerRecord){const all=await this.listLedger(),i=all.findIndex(y=>y.contentId===x.contentId),row=this.lv(x);if(i>=0)await this.sheets.spreadsheets.values.update({spreadsheetId:this.id,range:`'${LEDGER}'!A${i+2}:Q${i+2}`,valueInputOption:"RAW",requestBody:{values:[row]}});else await this.sheets.spreadsheets.values.append({spreadsheetId:this.id,range:`'${LEDGER}'!A:Q`,valueInputOption:"RAW",insertDataOption:"INSERT_ROWS",requestBody:{values:[row]}});}
  async appendRunLog(x:ContentAIRunLog){await this.ensureContentSheets();await this.sheets.spreadsheets.values.append({spreadsheetId:this.id,range:`'${LOG}'!A:P`,valueInputOption:"RAW",insertDataOption:"INSERT_ROWS",requestBody:{values:[[x.runId,x.startedAt,x.finishedAt,x.provider,x.model,x.operation,x.requestedCount,x.generatedCount,x.uniqueCount,x.reviewCount,x.duplicateCount,x.failedCount,x.estimatedInputTokens,x.estimatedOutputTokens,x.status,x.createdAt]]}});}
- async readThreadsPerformance(){const r=await this.sheets.spreadsheets.values.get({spreadsheetId:this.id,range:"'ContentMetrics'!A:Q"});return objects(r.data.values??[]).filter(x=>x.platform==="threads").map(x=>({contentId:String(x.contentId),views:Number(x.views||0),likes:Number(x.likes||0),replies:Number(x.replies||0),reposts:Number(x.reposts||0)}));}
+ async readThreadsPerformance():Promise<ThreadsPerformanceRecord[]>{const r=await this.sheets.spreadsheets.values.get({spreadsheetId:this.id,range:"'TopContent'!A:R"});return objects(r.data.values??[]).filter(x=>x.platform==="threads").map(x=>({contentId:String(x.contentId),views:Number(x.views||0),likes:Number(x.likes||0),replies:Number(x.replies||0),reposts:Number(x.reposts||0),quality:String(x.quality) as ThreadsPerformanceRecord["quality"],periodStart:String(x.periodStart),periodEnd:String(x.periodEnd)}));}
 }

@@ -55,7 +55,7 @@ export class ThreadsClient implements ThreadsApi {
   }
 
   async getAccountInsights(date: string): Promise<ThreadsInsight[]> {
-    const since = Math.floor(Date.parse(`${date}T00:00:00Z`) / 1000);
+    const since = Math.floor(Date.parse(`${date}T00:00:00+09:00`) / 1000);
     const until = since + 86400;
     const query = new URLSearchParams({ metric: THREADS_ACCOUNT_METRICS.join(","), since: String(since), until: String(until) });
     return (await this.request<{ data?: ThreadsInsight[] }>(`/me/threads_insights?${query}`)).data ?? [];

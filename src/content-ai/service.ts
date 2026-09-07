@@ -13,14 +13,14 @@ export class ThreadsContentService {
   constructor(private store: ContentStore, private posts: PostStore, private provider: ContentAIProvider, private strategy: ContentStrategy, private now = () => new Date()) { this.postService = new ThreadsPostService(posts, undefined, now); }
   private tiers(values: number[]) { const sorted = values.filter(Number.isFinite).sort((a, b) => a - b); return (value: number | null): PerformanceTier => { if (value === null || sorted.length < 5) return "INSUFFICIENT_DATA"; const ratio = value / (sorted.at(-1) || 1); return ratio >= .75 ? "HIGH" : ratio <= .25 ? "LOW" : "NORMAL"; }; }
   private async context(): Promise<AIContext> {
-    await this.store.ensureContentSheets(); const posts = await this.postService.list(), performance = await this.store.readThreadsPerformance(), ledger = await this.store.listLedger();
+    await this.store.ensureContentSheets(); const posts = await this.postService.list(), allPerformance = await this.store.readThreadsPerformance(), latestPerformanceEnd = allPerformance.map((row) => row.periodEnd).sort().at(-1), performance = allPerformance.filter((row) => row.quality === "OK" && row.periodEnd === latestPerformanceEnd), ledger = await this.store.listLedger();
     const latest = new Map<string, number>(); for (const row of performance) latest.set(row.contentId, Math.max(latest.get(row.contentId) ?? 0, row.views)); const tier = this.tiers([...latest.values()]);
     for (const post of posts.filter((row) => ["DRAFT", "REVIEW", "APPROVED", "SCHEDULED", "PUBLISHED", "CANCELLED"].includes(row.status))) {
       const contentId = post.threadsPostId || post.postId; if (ledger.some((row) => row.contentId === contentId)) continue;
       const record: ContentLedgerRecord = { contentId, postId: post.postId, platform: "threads", createdAt: post.createdAt, publishedAt: post.publishedAt, status: post.status, coreTheme: post.content.slice(0, 80), claim: post.content.slice(0, 160), readerValue: "", advice: "", contentPillar: "未分類", angle: "", hookType: "", contentSummary: post.content.slice(0, 160), sourceType: post.source, performanceTier: tier(latest.get(post.threadsPostId || "") ?? null), notes: "Phase 1/2 queue sync; axes require enrichment" };
       await this.store.upsertLedger(record); ledger.push(record);
     }
-    return { strategy: this.strategy, ledger, scheduled: posts.filter((row) => row.status === "SCHEDULED"), performanceSummary: performance.length < 5 ? "INSUFFICIENT_DATA" : `Threads content snapshots=${performance.length}; performance is theme context only` };
+    return { strategy: this.strategy, ledger, scheduled: posts.filter((row) => row.status === "SCHEDULED"), performanceSummary: performance.length < 5 ? "INSUFFICIENT_DATA" : `Threads eligible period deltas=${performance.length}; period=${performance[0]?.periodStart}..${performance[0]?.periodEnd}` };
   }
   async createPlan(days: number, postsPerDay: number, dryRun = false) {
     const started = this.now(), context = await this.context(), seeds = planSeeds(days, postsPerDay, this.strategy, started);

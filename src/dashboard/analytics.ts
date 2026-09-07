@@ -54,6 +54,7 @@ function aggregateRakuten(sales: SalesMetricRecord[], range: PeriodRange, field:
 }
 function change(current: MetricValue, previous: MetricValue): { value: number | null; label: string; quality: DataQuality } {
   if (current.value === null || previous.value === null) return { value: null, label: "比較不能", quality: current.quality === "INSUFFICIENT_BASELINE" || previous.quality === "INSUFFICIENT_BASELINE" ? "INSUFFICIENT_BASELINE" : worst([current.quality, previous.quality]) };
+  if (current.quality !== "OK" || previous.quality !== "OK") return { value: null, label: "比較不能", quality: worst([current.quality, previous.quality]) };
   if (previous.value === 0) return current.value === 0 ? { value: 0, label: "0%", quality: worst([current.quality, previous.quality]) } : { value: null, label: "NEW", quality: worst([current.quality, previous.quality]) };
   const value = (current.value - previous.value) / previous.value;
   return { value, label: `${value >= 0 ? "+" : ""}${(value * 100).toFixed(1)}%`, quality: worst([current.quality, previous.quality]) };
@@ -172,8 +173,8 @@ function buildDashboard(data: RawDashboardData, asOf: string, generatedAt: strin
   for (const platform of ["youtube", "threads"] as const) {
     const label = platform === "youtube" ? "YouTube" : "Threads",dailyViews=aggregateDaily(data.daily,platform,current,"views"),views=platform==="youtube"&&dailyViews.value===null?aggregateContentPeriod(data.content,platform,current,"views"):dailyViews,previousDaily=aggregateDaily(data.daily,platform,previous,"views"),previousViews=platform==="youtube"&&previousDaily.value===null?aggregateContentPeriod(data.content,platform,previous,"views"):previousDaily, comparison = change(views, previousViews),posts=postsPublished(data.content,platform,current),collection=collectionStatus(data,platform,current),activity=collection==="OK"?activityStatus(views,posts):((views.value??0)>0||(posts.value??0)>0?"HAS_DATA":"NO_DATA"),comparisonState=comparisonStatus(previousViews);
     rows.push({ section: label, metric: "最終データ更新", value: null, display: freshness[platform].display, quality: freshness[platform].quality, period: freshness[platform].value ?? "", generatedAt });
-    rows.push(dashboardRow(label, platform === "youtube" ? "直近7日間の再生数" : "直近7日間の閲覧数", views, `${current.start}〜${current.end}`, generatedAt));
-    rows.push(dashboardRow(label, platform === "youtube" ? "直前7日間の再生数" : "直前7日間の閲覧数", previousViews, `${previous.start}〜${previous.end}`, generatedAt));
+    rows.push(dashboardRow(label, platform === "youtube" ? "直近7日間の再生数" : "直近7日間のアカウント閲覧数", views, `${current.start}〜${current.end}`, generatedAt));
+    rows.push(dashboardRow(label, platform === "youtube" ? "直前7日間の再生数" : "直前7日間のアカウント閲覧数", previousViews, `${previous.start}〜${previous.end}`, generatedAt));
     rows.push({ section: label, metric: "前期間比", value: comparison.value, display: comparison.label, quality: comparison.quality, period: `${current.start}〜${current.end} / ${previous.start}〜${previous.end}`, generatedAt });
     rows.push(dashboardRow(label, "直近7日間のいいね", aggregateDaily(data.daily, platform, current, "likes"), `${current.start}〜${current.end}`, generatedAt));
     rows.push(dashboardRow(label, platform === "youtube" ? "直近7日間のコメント" : "直近7日間の返信", aggregateDaily(data.daily, platform, current, platform === "youtube" ? "comments" : "replies"), `${current.start}〜${current.end}`, generatedAt));

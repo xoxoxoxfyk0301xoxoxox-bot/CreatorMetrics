@@ -205,6 +205,8 @@ CSV Importでは`SalesMetrics`、`Transactions`、`CommissionPayments`を必要�
 
 集計期間はAsia/Tokyoの日付で、current=`asOf - 6日`〜`asOf`、previous=`asOf - 13日`〜`asOf - 7日`です。7日分のcoverageが揃わない数値0は、正常取得済みの実績0とは扱いません。
 
+Threadsのアカウント`views`はプロフィール閲覧のday metric、投稿別`views`は各投稿のlifetime metricであり、同一定義ではありません。Dashboard／Reportでは前者を「アカウント閲覧数」と明記します。投稿別ランキングは期間開始前baselineとの差分で作り、baseline不足または対象集合のcoverage不足時は断定的なTop投稿を表示しません。ContentAIのperformance contextには、最新期間かつData Qualityが`OK`の投稿別期間差分だけを渡します。
+
 Data Qualityは `OK`、`NO_DATA`、`NOT_SUPPORTED`、`INSUFFICIENT_BASELINE`、`STALE`、`PARTIAL` を保持します。空欄・未取得・非対応を数値0へ変換しません。Dashboardではそれぞれ「データなし」「未対応」「比較データ不足」「更新待ち」「一部データ」と表示します。
 
 媒体全体の判定ではData Qualityを収集成功の意味に流用せず、`collectionStatus`（OK/PARTIAL/FAILED/STALE/NO_DATA）、`activityStatus`（HAS_DATA/ZERO_ACTIVITY/NO_DATA）、`comparisonStatus`（COMPARABLE/INSUFFICIENT_BASELINE）の3軸を`WeeklySummary`へ保存します。投稿数・再生数が正常値0の場合は収集失敗ではなく`ZERO_ACTIVITY`です。直前期間のbaseline不足も対象期間実績とは独立して扱います。YouTubeの日次Analytics行が空でも動画別period行が保存されている場合、週次views/likes/comments/sharesはそのperiod行から安全に集計します。

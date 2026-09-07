@@ -58,6 +58,14 @@ describe("ThreadsClient", () => {
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
+  it("requests account day insights using Asia/Tokyo day boundaries", async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: [] }), { status: 200 }));
+    await new ThreadsClient("token", "https://graph.threads.net", fetcher).getAccountInsights("2026-09-05");
+    const url = new URL(String(fetcher.mock.calls[0]?.[0]));
+    expect(Number(url.searchParams.get("since"))).toBe(Date.parse("2026-09-05T00:00:00+09:00") / 1000);
+    expect(Number(url.searchParams.get("until"))).toBe(Date.parse("2026-09-06T00:00:00+09:00") / 1000);
+  });
+
   it("redacts the access token from API errors", async () => {
     const secret = "secret-token-value";
     const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: { code: 190, message: `Invalid token ${secret}` } }), { status: 401 }));
