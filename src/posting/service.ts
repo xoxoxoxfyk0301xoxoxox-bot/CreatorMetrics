@@ -5,6 +5,7 @@ import { ThreadsApiError, type ThreadsPublishingApi } from "../threads-client.js
 import { contentHash, duplicateCheck, normalizeContent } from "./duplicate.js";
 import { assertTransition } from "./state.js";
 import { inferPostingSlot, jitterCandidates, jstDateTime, jstIso, type PostingSlot } from "./time-windows.js";
+import { TransientSheetsError } from "./sheets-retry.js";
 import type { PostErrorCode, PostHistoryRecord, PostQueueRecord, PostStatus, PostStore, PublisherRunLogRecord, PublisherRunStore } from "./types.js";
 
 export const POSTING_LIMITS = { maxCharacters: 500, maxRetries: 3, minimumIntervalMinutes: 60, maxOverdueMinutes: 360 } as const;
@@ -14,7 +15,7 @@ export interface ImportSummary { read: number; draft: number; review: number; du
 export interface ImportDuplicateCleanupTarget { postId: string; keptPostId: string; status: "DRAFT" | "REVIEW"; createdAt: string; contentHash: string }
 export interface ImportDuplicateCleanupSummary { apply: boolean; scanned: number; duplicateGroups: number; targets: ImportDuplicateCleanupTarget[] }
 export interface ScheduleImportedOptions { jitter?: boolean; dryRun?: boolean }
-export interface DueSummary { dueCount: number; publishedCount: number; failedCount: number; expiredCount: number; skippedCount: number; dryRun: boolean; targets: { postId: string; action: "PUBLISH" | "EXPIRE" }[] }
+export interface DueSummary { dueCount: number; publishedCount: number; failedCount: number; expiredCount: number; skippedCount: number; dryRun: boolean; targets: { postId: string; action: "PUBLISH" | "EXPIRE" }[]; retryCount?: number; recoveredTransientError?: boolean; dependencyError?: "TRANSIENT_DEPENDENCY_FAILURE" }
 export interface DryRunResult { postId: string; status: PostStatus; content: string; scheduledAt: string; duplicate: { exact: boolean; near: boolean }; publishable: boolean; tokenValid: boolean; reason: string }
 function validateContent(content: string): string { const value = normalizeContent(content); if (!value) throw new Error("Post content must not be empty"); if ([...value].length > POSTING_LIMITS.maxCharacters) throw new Error(`Post content exceeds ${POSTING_LIMITS.maxCharacters} characters`); return value; }
 function importPreview(content: string): string { const value=content.replace(/\s+/g," ").trim(); return [...value].slice(0,40).join("") + ([...value].length>40?"…":""); }
@@ -77,16 +78,21 @@ export class ThreadsPostService {
       if (!this.api) throw new Error("Threads publishing API is not configured");
       post = await this.transition(id, "PUBLISHING", { errorCode: "", errorMessage: "" });
       const attempt = post.retryCount + 1;
+      let threadsPostId: string;
       try {
         await this.api.getProfile();
-        const creationId = await this.api.createTextContainer(post.content), threadsPostId = await this.api.publishContainer(creationId), publishedAt = this.now().toISOString();
-        post = await this.transition(id, "PUBLISHED", { threadsPostId, publishedAt, retryCount: attempt });
-        await this.history(post, "PUBLISHED", attempt, ""); return { status: "PUBLISHED", post };
+        const creationId = await this.api.createTextContainer(post.content);
+        threadsPostId = await this.api.publishContainer(creationId);
       } catch (error) {
         const failure = classify(error); post = await this.transition(id, "FAILED", { retryCount: attempt, errorCode: failure.code, errorMessage: failure.message }); await this.history(post, "FAILED", attempt, failure.code); return { status: "FAILED", post };
       }
+      // Once the external publish succeeds, persistence failures must never move the
+      // post back to FAILED: that would make a later run publish the same content again.
+      const publishedAt = this.now().toISOString();
+      post = await this.transition(id, "PUBLISHED", { threadsPostId, publishedAt, retryCount: attempt });
+      await this.history(post, "PUBLISHED", attempt, ""); return { status: "PUBLISHED", post };
     } finally { await lock.release(); }
   }
   private async history(post: PostQueueRecord, status: PostHistoryRecord["status"], attempt: number, errorCode: PostErrorCode) { const value: PostHistoryRecord = { historyId: randomUUID(), postId: post.postId, platform: "threads", contentHash: post.contentHash, scheduledAt: post.scheduledAt, publishedAt: post.publishedAt, status, threadsPostId: post.threadsPostId, attempt, errorCode, createdAt: this.now().toISOString() }; await this.store.appendHistory(value); }
-  async publishDue(dryRun=false): Promise<DueSummary> { const startedAt=this.now().toISOString(),runId=randomUUID(),now=this.now().getTime(),due=(await this.list()).filter(p=>p.status==="SCHEDULED"&&Date.parse(p.scheduledAt)<=now).sort((a,b)=>a.scheduledAt.localeCompare(b.scheduledAt));const targets=due.map(post=>({postId:post.postId,action:(now-Date.parse(post.scheduledAt)>POSTING_LIMITS.maxOverdueMinutes*60000?"EXPIRE":"PUBLISH") as "EXPIRE"|"PUBLISH"}));const summary:DueSummary={dueCount:due.length,publishedCount:0,failedCount:0,expiredCount:0,skippedCount:0,dryRun,targets};if(!dryRun){for(const target of targets){const post=await this.required(target.postId);if(target.action==="EXPIRE"){const expired=await this.transition(post.postId,"EXPIRED",{errorCode:"VALIDATION_ERROR",errorMessage:`Exceeded maximum overdue window of ${POSTING_LIMITS.maxOverdueMinutes} minutes`});await this.history(expired,"EXPIRED",post.retryCount,expired.errorCode);summary.expiredCount++;continue;}try{const result=await this.publish(post.postId);if(result.status==="PUBLISHED")summary.publishedCount++;else if(result.status==="FAILED")summary.failedCount++;else summary.skippedCount++;}catch{summary.failedCount++;}}}const overallStatus:PublisherRunLogRecord["overallStatus"]=summary.dueCount===0?"NO_DUE":summary.failedCount?summary.publishedCount||summary.expiredCount?"PARTIAL":"FAILED":"SUCCESS";if(this.runStore)await this.runStore.appendPublisherRunLog({runId,startedAt,finishedAt:this.now().toISOString(),dueCount:summary.dueCount,publishedCount:summary.publishedCount,failedCount:summary.failedCount,expiredCount:summary.expiredCount,skippedCount:summary.skippedCount,overallStatus});return summary;}
+  async publishDue(dryRun=false): Promise<DueSummary> { const startedAt=this.now().toISOString(),runId=randomUUID(),now=this.now().getTime(),due=(await this.list()).filter(p=>p.status==="SCHEDULED"&&Date.parse(p.scheduledAt)<=now).sort((a,b)=>a.scheduledAt.localeCompare(b.scheduledAt));const targets=due.map(post=>({postId:post.postId,action:(now-Date.parse(post.scheduledAt)>POSTING_LIMITS.maxOverdueMinutes*60000?"EXPIRE":"PUBLISH") as "EXPIRE"|"PUBLISH"}));const summary:DueSummary={dueCount:due.length,publishedCount:0,failedCount:0,expiredCount:0,skippedCount:0,dryRun,targets};if(!dryRun){for(const target of targets){try{const post=await this.required(target.postId);if(target.action==="EXPIRE"){const expired=await this.transition(post.postId,"EXPIRED",{errorCode:"VALIDATION_ERROR",errorMessage:`Exceeded maximum overdue window of ${POSTING_LIMITS.maxOverdueMinutes} minutes`});await this.history(expired,"EXPIRED",post.retryCount,expired.errorCode);summary.expiredCount++;continue;}const result=await this.publish(post.postId);if(result.status==="PUBLISHED")summary.publishedCount++;else if(result.status==="FAILED")summary.failedCount++;else summary.skippedCount++;}catch(error){summary.failedCount++;if(error instanceof TransientSheetsError)summary.dependencyError="TRANSIENT_DEPENDENCY_FAILURE";}}}const diagnostics=this.store.getRetryDiagnostics?.()??{retryCount:0,recoveredTransientError:false};summary.retryCount=diagnostics.retryCount;summary.recoveredTransientError=diagnostics.recoveredTransientError;const overallStatus:PublisherRunLogRecord["overallStatus"]=summary.dueCount===0?"NO_DUE":summary.failedCount?summary.publishedCount||summary.expiredCount?"PARTIAL":"FAILED":"SUCCESS";if(this.runStore)await this.runStore.appendPublisherRunLog({runId,startedAt,finishedAt:this.now().toISOString(),dueCount:summary.dueCount,publishedCount:summary.publishedCount,failedCount:summary.failedCount,expiredCount:summary.expiredCount,skippedCount:summary.skippedCount,overallStatus,retryCount:summary.retryCount,recoveredTransientError:summary.recoveredTransientError,dependencyError:summary.dependencyError??""});return summary;}
 }

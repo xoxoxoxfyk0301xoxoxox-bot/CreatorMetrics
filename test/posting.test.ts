@@ -6,6 +6,7 @@ import { assertTransition } from "../src/posting/state.js";
 import type { PostHistoryRecord, PostQueueRecord, PostStore } from "../src/posting/types.js";
 import type { PublisherRunLogRecord, PublisherRunStore } from "../src/posting/types.js";
 import { readPostCandidates } from "../src/posting/batch.js";
+import { withSheetsRetry } from "../src/posting/sheets-retry.js";
 import { writeFile, mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -31,10 +32,50 @@ describe("Threads posting queue", () => {
   it("approves and schedules with timezone validation", async () => { const service = new ThreadsPostService(new MemoryStore(), undefined, now), post = await service.addDraft("candidate"); expect((await service.approve(post.postId)).status).toBe("APPROVED"); await expect(service.schedule(post.postId, "2026-09-01 10:00")).rejects.toThrow("timezone"); expect((await service.schedule(post.postId, "2026-09-01T10:00:00+09:00")).status).toBe("SCHEDULED"); });
   it("does not mark a future scheduled post due", async () => { const service = new ThreadsPostService(new MemoryStore(), api(), now), post = await service.addDraft("future"); await service.approve(post.postId); await service.schedule(post.postId, "2026-09-01T10:00:00+09:00"); expect((await service.dryRun(post.postId))).toMatchObject({ publishable: false, reason: "NOT_DUE" }); expect(await service.publishDue()).toMatchObject({dueCount:0,targets:[]}); });
   it("publishes through two API steps, appends history, and is idempotent", async () => { const { service, store, postId } = await scheduled(); expect((await service.publish(postId)).status).toBe("PUBLISHED"); expect(store.history).toHaveLength(1); expect(store.history[0]?.status).toBe("PUBLISHED"); expect((await service.publish(postId)).status).toBe("SKIPPED"); expect(store.history).toHaveLength(1); });
+  it("retries a transient Sheets write after publish without calling Threads twice", async () => {
+    class RetryWriteStore extends MemoryStore {
+      publishedWrites=0;
+      override async upsertPost(post:PostQueueRecord){
+        await withSheetsRetry(async()=>{if(post.status==="PUBLISHED"&&this.publishedWrites++===0)throw Object.assign(new Error("backendError"),{response:{status:503}});this.posts.set(post.postId,post);},{sleep:async()=>undefined,jitterRatio:0});
+      }
+    }
+    const store=new RetryWriteStore();let publishCalls=0;
+    const client:ThreadsPublishingApi={async getProfile(){return{id:"redacted"}},async createTextContainer(){return"container"},async publishContainer(){publishCalls++;return"external-post"}};
+    const setup=await scheduled(store,client),result=await setup.service.publish(setup.postId);
+    expect(result.status).toBe("PUBLISHED");expect(publishCalls).toBe(1);expect(store.publishedWrites).toBe(2);expect(store.history).toHaveLength(1);
+  });
+  it("never republishes after external success when Sheets persistence exhausts retries", async()=>{
+    class ExhaustedWriteStore extends MemoryStore {override async upsertPost(post:PostQueueRecord){if(post.status==="PUBLISHED")throw Object.assign(new Error("backendError"),{response:{status:503}});this.posts.set(post.postId,post);}}
+    const store=new ExhaustedWriteStore();let publishCalls=0;
+    const client:ThreadsPublishingApi={async getProfile(){return{id:"redacted"}},async createTextContainer(){return"container"},async publishContainer(){publishCalls++;return"external-post"}};
+    const setup=await scheduled(store,client);
+    await expect(setup.service.publish(setup.postId)).rejects.toThrow("backendError");
+    expect((await store.getPost(setup.postId))?.status).toBe("PUBLISHING");
+    await expect(setup.service.publish(setup.postId)).rejects.toThrow("not publishable");
+    expect(publishCalls).toBe(1);
+  });
+  it("does not republish when PostQueue is PUBLISHED but PostHistory persistence fails",async()=>{
+    class HistoryFailureStore extends MemoryStore {override async appendHistory(){throw Object.assign(new Error("backendError"),{response:{status:503}});}}
+    const store=new HistoryFailureStore();let publishCalls=0;
+    const client:ThreadsPublishingApi={async getProfile(){return{id:"redacted"}},async createTextContainer(){return"container"},async publishContainer(){publishCalls++;return"external-post"}};
+    const setup=await scheduled(store,client);
+    await expect(setup.service.publish(setup.postId)).rejects.toThrow("backendError");
+    expect((await store.getPost(setup.postId))?.status).toBe("PUBLISHED");
+    expect((await setup.service.publish(setup.postId)).status).toBe("SKIPPED");
+    expect(publishCalls).toBe(1);expect(store.history).toHaveLength(0);
+  });
+  it("leaves a due post scheduled after a transient read failure so the next run redetects it", async()=>{
+    class ReadFailureStore extends MemoryStore {fail=true;override async listPosts(){this.listCalls++;if(this.fail){this.fail=false;throw Object.assign(new Error("backendError"),{response:{status:503}});}return[...this.posts.values()];}}
+    const store=new ReadFailureStore();store.fail=false;const setup=await scheduled(store);store.fail=true;
+    await expect(setup.service.publishDue(true)).rejects.toThrow("backendError");
+    expect((await store.getPost(setup.postId))?.status).toBe("SCHEDULED");
+    await expect(setup.service.publishDue(true)).resolves.toMatchObject({dueCount:1,targets:[{postId:setup.postId,action:"PUBLISH"}]});
+  });
   it("records API failure and retry count with no secret", async () => { const secret = "token-secret-value", setup = await scheduled(new MemoryStore(), api(new Error(`API failed access_token=${secret}`))); const result = await setup.service.publish(setup.postId); expect(result.post).toMatchObject({ status: "FAILED", retryCount: 1 }); expect(result.post.errorMessage).not.toContain(secret); expect(setup.store.history[0]?.status).toBe("FAILED"); });
   it.each([[new ThreadsApiError("THREADS_190", "expired"), "AUTH_ERROR"], [new ThreadsApiError("THREADS_429", "limited"), "RATE_LIMIT"]] as const)("classifies API errors", async (error, code) => { const setup = await scheduled(new MemoryStore(), api(error)); expect((await setup.service.publish(setup.postId)).post.errorCode).toBe(code); });
   it("enforces retry limit", async () => { const setup = await scheduled(new MemoryStore(), api(new Error("failure"))); await setup.service.publish(setup.postId); await setup.service.publish(setup.postId); await setup.service.publish(setup.postId); await expect(setup.service.publish(setup.postId)).rejects.toThrow("retry limit"); expect((await setup.store.getPost(setup.postId))?.retryCount).toBe(3); });
   it("continues due publishing after one failure", async () => { const store = new MemoryStore(); let calls = 0; const client: ThreadsPublishingApi = { async getProfile(){return{id:"x"};}, async createTextContainer(){calls++; if(calls===1) throw new Error("first failed"); return "c";}, async publishContainer(){return "p";} }; const first=await scheduled(store,client), secondPost=await first.service.addDraft("second"); const approved=await first.service.approve(secondPost.postId);await store.upsertPost({...approved,status:"SCHEDULED",scheduledAt:"2026-08-28T23:30:00Z"}); const results=await first.service.publishDue(); expect(results).toMatchObject({failedCount:1,publishedCount:1}); });
+  it("records recovered Sheets retries while keeping the run successful",async()=>{class DiagnosticStore extends MemoryStore{getRetryDiagnostics(){return{retryCount:2,recoveredTransientError:true}}}const store=new DiagnosticStore();await scheduled(store);const service=new ThreadsPostService(store,api(),now,store),result=await service.publishDue();expect(result).toMatchObject({publishedCount:1,failedCount:0,retryCount:2,recoveredTransientError:true});expect(store.runs.at(-1)).toMatchObject({overallStatus:"SUCCESS",retryCount:2,recoveredTransientError:true,dependencyError:""});});
   it("detects exact duplicates only against protected statuses", async () => { const { store } = await scheduled(); const posts=await store.listPosts(); expect(duplicateCheck(posts[0]!.content,posts,"other").exact).toBe(true); });
   it("imports rows without auto approval or scheduling and isolates invalid rows",async()=>{const store=new MemoryStore(),service=new ThreadsPostService(store,undefined,now);const result=await service.importCandidates([{content:"valid",scheduledAt:"2026-09-01T08:00:00+09:00",notes:"a"},{content:"",scheduledAt:"",notes:"bad"}]);expect(result).toMatchObject({read:2,draft:1,errors:1,errorDetails:[{row:2,preview:"",scheduledAt:"",error:"Post content must not be empty"}]});expect(result.posts).toHaveLength(1);expect(result.posts[0]).toMatchObject({status:"DRAFT",scheduledAt:"",requestedScheduledAt:"2026-08-31T23:00:00.000Z"});});
   it("formats safe row-level import errors for CLI output",async()=>{const store=new MemoryStore(),service=new ThreadsPostService(store,undefined,now);const result=await service.importCandidates([{content:"a long preview that is safe to show in diagnostic output and continues",scheduledAt:"invalid",notes:""}]);const output=formatImportErrorDetails(result.errorDetails);expect(output).toContain("エラー詳細:");expect(output).toContain("row=1");expect(output).toContain('scheduledAt="invalid"');expect(output).toContain('error="invalid scheduledAt"');expect(output).not.toContain("continues");});

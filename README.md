@@ -118,6 +118,8 @@ npm run post:threads:schedule-batch -- \
 
 `PostQueue`は本文を保持する可変台帳、`PostHistory`は本文を重複保存しない不変attemptログです。本文は改行・前後空白・連続水平空白だけを正規化してSHA-256化します。PUBLISHEDまたはAPPROVED/SCHEDULED/PUBLISHINGと完全一致する本文は`SKIPPED_DUPLICATE`、URL・ハッシュタグ除去後の一致またはbigram類似度90%以上は自動削除せず`REVIEW`警告になります。
 
+Publisher経路のGoogle Sheets呼び出しはHTTP 429/500/502/503/504に限り、最大4回、約1秒・2秒・4秒の指数バックオフ（少量jitter付き）で再試行します。その他の4xxは再試行しません。publish前のSheets readが最終失敗した場合はQueueを変更せず、次回5分runで360分window内のSCHEDULEDを再検出します。Threads APIが成功した後のSheets記録障害では投稿をFAILEDへ戻さずPUBLISHINGのまま停止し、外部投稿を自動再送しません。この状態は二重投稿防止を優先して手動照合が必要です。`PostHistory`と`PublisherRunLog`のappendで失敗応答を受けた場合は、同じhistoryId/runIdの存在確認後、未反映と確認できた場合だけ再送します。存在確認も失敗した場合は重複防止のためappendを停止します。`PublisherRunLog`には回復したretry回数と依存障害区分を保存します。
+
 publishは公式Threads APIの`POST /me/threads?media_type=TEXT`でコンテナを作り、`POST /me/threads_publish`で公開します。`auto_publish_text`は使用しません。postIdごとのPID/nonce lock、status、threadsPostIdにより二重投稿を防止します。retry上限は3回で、認証エラーは分類して記録し、自動無限retryはしません。`post:threads:due`は期限到来済みSCHEDULEDを古い順に1件ずつ処理し、1件失敗しても後続を継続します。Phase 1ではlaunchdへの自動投稿登録は行いません。
 
 `post:threads:dry-run`はToken値を出さず、profile取得でToken有効性を確認します。実投稿permissionの最終確認はpublish時になるため、再認可後も初回live postは必ずユーザー承認を得て手動実行してください。
