@@ -164,7 +164,7 @@ export class YouTubeAdapter implements MetricsAdapter {
     const rows: unknown[][] = [];
     while (true) {
       const params = {
-        ids: `channel==${channelId}`, startDate, endDate, dimensions: "video,creatorContentType",
+        ids: `channel==${channelId}`, startDate, endDate, dimensions: "video",
         metrics: CONTENT_METRICS.join(","), sort: "-views", maxResults: pageSize, startIndex
       } satisfies youtubeAnalytics_v2.Params$Resource$Reports$Query;
       const page = await this.services.queryAnalytics(params);

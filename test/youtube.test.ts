@@ -16,7 +16,8 @@ describe("YouTubeAdapter", () => {
       async listPlaylistVideoIds() { return ["old-video"]; }
     };
     const result = await new YouTubeAdapter({} as Auth.OAuth2Client, "mine", services).collect({ date: "2026-08-25", timeZone: "Asia/Tokyo" });
-    expect(queries).toContain("video,creatorContentType");
+    expect(queries).toContain("video");
+    expect(queries).not.toContain("video,creatorContentType");
     expect(result.contentMetrics[0]).toMatchObject({ date: "2026-08-25", contentId: "old-video", contentType: "short", publishedAt: "2024-01-01T00:00:00Z", views: 20 });
   });
 
