@@ -5,6 +5,11 @@ export interface ContentMetricRecord {
   views: number; estimatedMinutesWatched: number; likes: number; comments: number; shares: number; averageViewDuration: number;
   impressions?: number; ctr?: number; collectedAt: string;
   replies?: number; reposts?: number; quotes?: number; engagementRate?: number;
+  engagedViews?: number; averageViewPercentage?: number; subscribersGained?: number;
+  videoDurationSeconds?: number; analyticsAvailable?: boolean; metricSemantics?: "period" | "snapshot";
+  lifetimeViews?: number; lifetimeEngagedViews?: number; lifetimeEstimatedMinutesWatched?: number;
+  lifetimeAverageViewDuration?: number; lifetimeAverageViewPercentage?: number; lifetimeSubscribersGained?: number;
+  lifetimeLikes?: number; lifetimeComments?: number; lifetimeCollectedAt?: string;
 }
 export interface AdapterCollection { dailyMetrics: DailyMetricRecord[]; contentMetrics: ContentMetricRecord[]; notes: string[] }
 export interface CollectionContext { date: string; timeZone: string }

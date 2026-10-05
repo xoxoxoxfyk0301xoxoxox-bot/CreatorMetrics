@@ -23,6 +23,7 @@
     "dashboard": "tsx src/cli.ts dashboard",
     "report": "tsx src/cli.ts report",
     "daily": "tsx src/cli.ts daily",
+    "youtube:export": "tsx src/cli.ts youtube:export",
     "scheduler:install": "node scripts/scheduler.mjs install",
     "scheduler:status": "node scripts/scheduler.mjs status",
     "scheduler:run": "node scripts/scheduler.mjs run",

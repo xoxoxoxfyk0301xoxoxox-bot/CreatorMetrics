@@ -336,3 +336,13 @@ npm run verify
 - SecretをGitへコミットしないでください。CIではSecretストアから環境変数を注入します。
 - Collector終了コードは両媒体とも失敗した場合のみ非ゼロです。部分失敗は `CollectionLog` とコンソール結果で監視してください。
 - Google Sheetsへの同時多重実行は避けてください。単一ジョブでの日次実行を想定しています。
+## YouTube Channel Intelligence export
+
+`npm run youtube:export` はGoogle Sheetsの既存データを読み取り、`exports/youtube-channel-intelligence.json`（schema `2.0.0`）を原子的に再生成します。`npm run daily` の最後にも失敗分離した形で実行されます。生成物はチャンネル固有データを含むためGit管理外です。
+
+- 日次値はYouTube Analytics APIのperiod値、Lifetimeは最新収集時点のsnapshotです。
+- Day 1 / Day 2 / Day 7はAsia/Tokyoの公開暦日からの累積で、厳密なrolling 24/48時間ではありません。
+- 欠損日は補間せず `INSUFFICIENT_COVERAGE` とします。
+- Shorts分類は公式 `creatorContentType=SHORTS`、維持率は公式 `averageViewPercentage` を使います。
+- thumbnail impressions / CTRは別のYouTube Reporting APIパイプラインが必要なため未取得です。Stayed-to-watch / swiped-awayも推測しません。
+- Data APIは50動画単位、Analytics動画レポートは200行単位で取得します。

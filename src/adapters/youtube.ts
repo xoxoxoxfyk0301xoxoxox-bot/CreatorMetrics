@@ -2,7 +2,7 @@ import { google, type Auth, type youtube_v3, type youtubeAnalytics_v2 } from "go
 import type { AdapterCollection, CollectionContext, ContentMetricRecord, DailyMetricRecord, MetricsAdapter } from "../types.js";
 
 const DAILY_METRICS = ["views", "estimatedMinutesWatched", "subscribersGained", "subscribersLost", "likes", "comments", "shares"] as const;
-const CONTENT_METRICS = ["views", "estimatedMinutesWatched", "likes", "comments", "shares", "averageViewDuration"] as const;
+const CONTENT_METRICS = ["views", "engagedViews", "estimatedMinutesWatched", "likes", "comments", "shares", "averageViewDuration", "averageViewPercentage", "subscribersGained"] as const;
 
 interface YouTubeServices {
   listChannels(params: youtube_v3.Params$Resource$Channels$List): Promise<youtube_v3.Schema$Channel[]>;
@@ -20,7 +20,7 @@ function productionServices(auth: Auth.OAuth2Client): YouTubeServices {
     async listVideos(ids) {
       const items: youtube_v3.Schema$Video[] = [];
       for (let index = 0; index < ids.length; index += 50) {
-        const response = await youtube.videos.list({ part: ["snippet", "liveStreamingDetails"], id: ids.slice(index, index + 50) });
+        const response = await youtube.videos.list({ part: ["snippet", "contentDetails", "statistics", "liveStreamingDetails"], id: ids.slice(index, index + 50) });
         items.push(...(response.data.items ?? []));
       }
       return items;
@@ -48,6 +48,13 @@ function subtractDays(date: string, days: number): string {
   const value = new Date(`${date}T00:00:00Z`);
   value.setUTCDate(value.getUTCDate() - days);
   return value.toISOString().slice(0, 10);
+}
+
+export function isoDurationSeconds(value?: string | null): number | undefined {
+  if (!value) return undefined;
+  const match = value.match(/^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?)?$/);
+  if (!match) return undefined;
+  return Number(match[1] ?? 0) * 86400 + Number(match[2] ?? 0) * 3600 + Number(match[3] ?? 0) * 60 + Number(match[4] ?? 0);
 }
 
 export interface YouTubeDiagnosticResult {
@@ -86,9 +93,11 @@ export class YouTubeAdapter implements MetricsAdapter {
     const channel = channels[0];
     if (!channel?.id) throw new Error("YouTube channel was not found for the authenticated user");
     const collectedAt = new Date().toISOString();
-    const [dailyReport, contentReport] = await Promise.all([
+    const channelStart = channel.snippet?.publishedAt?.slice(0, 10) || "2005-02-14";
+    const [dailyReport, contentReport, lifetimeReport] = await Promise.all([
       this.services.queryAnalytics({ ids: `channel==${channel.id}`, startDate: date, endDate: date, dimensions: "day", metrics: DAILY_METRICS.join(",") }),
-      this.queryAllContentRows(channel.id, date)
+      this.queryAllContentRows(channel.id, date, date),
+      this.queryAllContentRows(channel.id, channelStart, date)
     ]);
     const dailyRow = dailyReport.rows?.[0];
     const analyticsMetrics = dailyRow ? numericRow(dailyReport.columnHeaders ?? [], dailyRow) : {};
@@ -101,21 +110,43 @@ export class YouTubeAdapter implements MetricsAdapter {
     const videoIndex = contentHeaders.findIndex((header) => header.name === "video");
     if ((contentReport.rows?.length ?? 0) > 0 && videoIndex < 0) throw new Error("YouTube Analytics video report did not contain the video dimension");
     const contentRows = contentReport.rows ?? [];
-    const analyticsByVideo = new Map(contentRows.map((row) => [String(row[videoIndex]), numericRow(contentHeaders, row)]));
+    const creatorTypeIndex = contentHeaders.findIndex((header) => header.name === "creatorContentType");
+    const analyticsByVideo = new Map<string, Record<string, number | string>>(contentRows.map((row) => [String(row[videoIndex]), { ...numericRow(contentHeaders, row), creatorContentType: creatorTypeIndex >= 0 ? String(row[creatorTypeIndex] ?? "") : "" }]));
+    const lifetimeHeaders = lifetimeReport.columnHeaders ?? [];
+    const lifetimeVideoIndex = lifetimeHeaders.findIndex((header) => header.name === "video");
+    const lifetimeCreatorTypeIndex = lifetimeHeaders.findIndex((header) => header.name === "creatorContentType");
+    const lifetimeByVideo = new Map<string, Record<string, number | string>>((lifetimeReport.rows ?? []).map((row) => [String(row[lifetimeVideoIndex]), { ...numericRow(lifetimeHeaders, row), creatorContentType: lifetimeCreatorTypeIndex >= 0 ? String(row[lifetimeCreatorTypeIndex] ?? "") : "" }]));
     const uploadsPlaylist = channel.contentDetails?.relatedPlaylists?.uploads;
     const uploadVideoIds = uploadsPlaylist ? await this.services.listPlaylistVideoIds(uploadsPlaylist, 5000) : [];
     const videoIds = [...new Set([...uploadVideoIds, ...analyticsByVideo.keys()])];
     const videos = videoIds.length ? await this.services.listVideos(videoIds) : [];
     const metadata = new Map(videos.filter((video) => video.id).map((video) => [video.id!, video]));
     const contentMetrics: ContentMetricRecord[] = videoIds.map((contentId) => {
-      const values = analyticsByVideo.get(contentId) ?? {};
+      const values: Record<string, number | string> = analyticsByVideo.get(contentId) ?? {};
+      const lifetime: Record<string, number | string> = lifetimeByVideo.get(contentId) ?? {};
       const video = metadata.get(contentId);
+      const creatorType = String(values.creatorContentType ?? lifetime.creatorContentType ?? "");
+      const publicStats = video?.statistics ?? {};
+      const metric = (name: string) => typeof values[name] === "number" ? values[name] as number : 0;
       return {
-        date, platform: this.platform, contentId, contentType: video?.liveStreamingDetails ? "live" : "video",
+        date, platform: this.platform, contentId, contentType: creatorType === "SHORTS" ? "short" : creatorType === "LIVE_STREAM" || video?.liveStreamingDetails ? "live" : "video",
         title: video?.snippet?.title ?? "", publishedAt: video?.snippet?.publishedAt ?? "",
-        views: values.views ?? 0, estimatedMinutesWatched: values.estimatedMinutesWatched ?? 0,
-        likes: values.likes ?? 0, comments: values.comments ?? 0, shares: values.shares ?? 0,
-        averageViewDuration: values.averageViewDuration ?? 0, collectedAt
+        views: metric("views"), estimatedMinutesWatched: metric("estimatedMinutesWatched"),
+        likes: metric("likes"), comments: metric("comments"), shares: metric("shares"),
+        averageViewDuration: metric("averageViewDuration"), collectedAt,
+        ...(typeof values.engagedViews === "number" ? { engagedViews: values.engagedViews } : {}),
+        ...(typeof values.averageViewPercentage === "number" ? { averageViewPercentage: values.averageViewPercentage } : {}),
+        ...(typeof values.subscribersGained === "number" ? { subscribersGained: values.subscribersGained } : {}),
+        ...(isoDurationSeconds(video?.contentDetails?.duration) !== undefined ? { videoDurationSeconds: isoDurationSeconds(video?.contentDetails?.duration)! } : {}),
+        analyticsAvailable: analyticsByVideo.has(contentId), metricSemantics: "period",
+        lifetimeViews: typeof lifetime.views === "number" ? lifetime.views : Number(publicStats.viewCount ?? 0),
+        ...(typeof lifetime.engagedViews === "number" ? { lifetimeEngagedViews: lifetime.engagedViews } : {}),
+        ...(typeof lifetime.estimatedMinutesWatched === "number" ? { lifetimeEstimatedMinutesWatched: lifetime.estimatedMinutesWatched } : {}),
+        ...(typeof lifetime.averageViewDuration === "number" ? { lifetimeAverageViewDuration: lifetime.averageViewDuration } : {}),
+        ...(typeof lifetime.averageViewPercentage === "number" ? { lifetimeAverageViewPercentage: lifetime.averageViewPercentage } : {}),
+        ...(typeof lifetime.subscribersGained === "number" ? { lifetimeSubscribersGained: lifetime.subscribersGained } : {}),
+        lifetimeLikes: typeof lifetime.likes === "number" ? lifetime.likes : Number(publicStats.likeCount ?? 0),
+        lifetimeComments: typeof lifetime.comments === "number" ? lifetime.comments : Number(publicStats.commentCount ?? 0), lifetimeCollectedAt: collectedAt
       };
     });
     const notes = contentMetrics.length === 0
@@ -126,14 +157,14 @@ export class YouTubeAdapter implements MetricsAdapter {
     return { dailyMetrics, contentMetrics, notes };
   }
 
-  private async queryAllContentRows(channelId: string, date: string): Promise<youtubeAnalytics_v2.Schema$QueryResponse> {
+  private async queryAllContentRows(channelId: string, startDate: string, endDate: string): Promise<youtubeAnalytics_v2.Schema$QueryResponse> {
     const pageSize = 200;
     let startIndex = 1;
     let columnHeaders: youtubeAnalytics_v2.Schema$ResultTableColumnHeader[] = [];
     const rows: unknown[][] = [];
     while (true) {
       const params = {
-        ids: `channel==${channelId}`, startDate: date, endDate: date, dimensions: "video",
+        ids: `channel==${channelId}`, startDate, endDate, dimensions: "video,creatorContentType",
         metrics: CONTENT_METRICS.join(","), sort: "-views", maxResults: pageSize, startIndex
       } satisfies youtubeAnalytics_v2.Params$Resource$Reports$Query;
       const page = await this.services.queryAnalytics(params);

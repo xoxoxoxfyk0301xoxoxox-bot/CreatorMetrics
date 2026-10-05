@@ -35,6 +35,7 @@ import { createNoCallProvider } from "./content-ai/dry-provider.js";
 import { GoogleSheetsPostingDashboardStore } from "./posting-dashboard/google-sheets.js";
 import { runPostingDashboard } from "./posting-dashboard/index.js";
 import { inferPostingSlot, jstDateTime, POSTING_TIME_RULE } from "./posting/time-windows.js";
+import { buildYouTubeIntelligenceExport, readYouTubeExportInput, writeYouTubeIntelligenceExport } from "./youtube-intelligence-export.js";
 
 type SelectedPlatform = "youtube" | "pinterest" | "threads";
 
@@ -160,6 +161,14 @@ async function report(): Promise<void> {
   console.log(`Report generated: period=${result.periodStart}..${result.periodEnd} lines=${result.lines.length}`);
 }
 
+async function exportYouTubeIntelligence(): Promise<void> {
+  const config=loadConfig(),auth=createGoogleAuth(config.google);
+  const input=await readYouTubeExportInput(auth,config.google.sheetId);
+  const output=buildYouTubeIntelligenceExport({...input,timeZone:config.timeZone});
+  await writeYouTubeIntelligenceExport(output);
+  console.log(`YouTube intelligence export: videos=${output.videos.length} schema=${output.schemaVersion}`);
+}
+
 async function daily(): Promise<void> {
   const lock = await acquireDailyLock();
   try {
@@ -187,6 +196,8 @@ async function daily(): Promise<void> {
     logStore: new GoogleSheetsDailyRunLogStore(auth, config.google.sheetId)
   });
   printDailySummary(result);
+  try { await exportYouTubeIntelligence(); }
+  catch (error) { console.error(`YouTube intelligence export: failed (${String(error instanceof Error?error.message:error).slice(0,300)})`); }
   if (result.log.overallStatus === "FAILED") process.exitCode = 1;
   } finally { await lock.release(); }
 }
@@ -247,6 +258,7 @@ else if (command === "import:rakuten") await importCsv("rakuten");
 else if (command === "dashboard") await dashboard();
 else if (command === "report") await report();
 else if (command === "daily") await daily();
+else if (command === "youtube:export") await exportYouTubeIntelligence();
 else if (command === "posting:dashboard") await postingDashboard();
 else if (command.startsWith("content:threads:")) await contentAI(command);
 else if (command.startsWith("post:threads:")) await posting(command);

@@ -13,5 +13,6 @@ coverage/
 logs/
 data/import/**/*.csv
 data/posts/*.csv
+exports/*.json
 !data/posts/*.csv.example
 .DS_Store

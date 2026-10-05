@@ -10,14 +10,14 @@ describe("YouTubeAdapter", () => {
       async queryAnalytics(params) {
         queries.push(params.dimensions ?? "");
         if (params.dimensions === "day") return { columnHeaders: [{ name: "day" }, { name: "views" }], rows: [["2026-08-25", 20]] };
-        return { columnHeaders: [{ name: "video" }, { name: "views" }, { name: "estimatedMinutesWatched" }, { name: "likes" }, { name: "comments" }, { name: "shares" }, { name: "averageViewDuration" }], rows: [["old-video", 20, 40, 3, 1, 2, 120]] };
+        return { columnHeaders: [{ name: "video" }, { name: "creatorContentType" }, { name: "views" }, { name: "estimatedMinutesWatched" }, { name: "likes" }, { name: "comments" }, { name: "shares" }, { name: "averageViewDuration" }], rows: [["old-video", "SHORTS", 20, 40, 3, 1, 2, 120]] };
       },
       async listVideos() { return [{ id: "old-video", snippet: { title: "Old video", publishedAt: "2024-01-01T00:00:00Z" } }]; },
       async listPlaylistVideoIds() { return ["old-video"]; }
     };
     const result = await new YouTubeAdapter({} as Auth.OAuth2Client, "mine", services).collect({ date: "2026-08-25", timeZone: "Asia/Tokyo" });
-    expect(queries).toContain("video");
-    expect(result.contentMetrics[0]).toMatchObject({ date: "2026-08-25", contentId: "old-video", publishedAt: "2024-01-01T00:00:00Z", views: 20 });
+    expect(queries).toContain("video,creatorContentType");
+    expect(result.contentMetrics[0]).toMatchObject({ date: "2026-08-25", contentId: "old-video", contentType: "short", publishedAt: "2024-01-01T00:00:00Z", views: 20 });
   });
 
   it("returns zero-valued snapshots for existing uploads when Analytics has no video rows", async () => {
