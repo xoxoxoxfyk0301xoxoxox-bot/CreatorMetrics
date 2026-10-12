@@ -338,7 +338,9 @@ npm run verify
 - Google Sheetsへの同時多重実行は避けてください。単一ジョブでの日次実行を想定しています。
 ## YouTube Channel Intelligence export
 
-`npm run youtube:export` はGoogle Sheetsの既存データを読み取り、`exports/youtube-channel-intelligence.json`（schema `2.0.0`）を原子的に再生成します。`npm run daily` の最後にも失敗分離した形で実行されます。生成物はチャンネル固有データを含むためGit管理外です。
+`npm run youtube:export` はGoogle Sheetsの既存データを読み取り、`exports/youtube-channel-intelligence.json`（schema `3.0.0`、Dashboardは旧`2.0.0`も読込可能）を原子的に再生成します。`npm run daily` の最後にも失敗分離した形で実行されます。生成物はチャンネル固有データを含むためGit管理外です。
+
+export schema `3.0.0` では、チャンネル単位（Analyticsの日次・Lifetime）、動画単位（各動画のLifetime・日次）、Data APIの現在値を分離します。`views`とShortsの`engagedViews`は別指標です。登録者は`subscribersGained`、`subscribersLost`、その差である純増、Data APIの現在登録者数を混同しません。旧行に必要な日次値がない期間は0補完せずcoverage不足として扱います。
 
 - 日次値はYouTube Analytics APIのperiod値、Lifetimeは最新収集時点のsnapshotです。
 - Day 1 / Day 2 / Day 7はAsia/Tokyoの公開暦日からの累積で、厳密なrolling 24/48時間ではありません。

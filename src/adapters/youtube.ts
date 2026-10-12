@@ -2,7 +2,7 @@ import { google, type Auth, type youtube_v3, type youtubeAnalytics_v2 } from "go
 import type { AdapterCollection, CollectionContext, ContentMetricRecord, DailyMetricRecord, MetricsAdapter } from "../types.js";
 
 const DAILY_METRICS = ["views", "estimatedMinutesWatched", "subscribersGained", "subscribersLost", "likes", "comments", "shares"] as const;
-const CONTENT_METRICS = ["views", "engagedViews", "estimatedMinutesWatched", "likes", "comments", "shares", "averageViewDuration", "averageViewPercentage", "subscribersGained"] as const;
+const CONTENT_METRICS = ["views", "engagedViews", "estimatedMinutesWatched", "likes", "comments", "shares", "averageViewDuration", "averageViewPercentage", "subscribersGained", "subscribersLost"] as const;
 
 interface YouTubeServices {
   listChannels(params: youtube_v3.Params$Resource$Channels$List): Promise<youtube_v3.Schema$Channel[]>;
@@ -94,16 +94,18 @@ export class YouTubeAdapter implements MetricsAdapter {
     if (!channel?.id) throw new Error("YouTube channel was not found for the authenticated user");
     const collectedAt = new Date().toISOString();
     const channelStart = channel.snippet?.publishedAt?.slice(0, 10) || "2005-02-14";
-    const [dailyReport, contentReport, lifetimeReport] = await Promise.all([
+    const [dailyReport, contentReport, lifetimeReport, channelLifetimeReport] = await Promise.all([
       this.services.queryAnalytics({ ids: `channel==${channel.id}`, startDate: date, endDate: date, dimensions: "day", metrics: DAILY_METRICS.join(",") }),
       this.queryAllContentRows(channel.id, date, date),
-      this.queryAllContentRows(channel.id, channelStart, date)
+      this.queryAllContentRows(channel.id, channelStart, date),
+      this.services.queryAnalytics({ ids: `channel==${channel.id}`, startDate: channelStart, endDate: date, metrics: DAILY_METRICS.join(",") })
     ]);
     const dailyRow = dailyReport.rows?.[0];
     const analyticsMetrics = dailyRow ? numericRow(dailyReport.columnHeaders ?? [], dailyRow) : {};
     delete analyticsMetrics.day;
     const stats = channel.statistics ?? {};
-    const metrics = { ...analyticsMetrics, channelViewCount: Number(stats.viewCount ?? 0), subscriberCount: Number(stats.subscriberCount ?? 0), videoCount: Number(stats.videoCount ?? 0) };
+    const lifetimeChannel = channelLifetimeReport.rows?.[0] ? numericRow(channelLifetimeReport.columnHeaders ?? [], channelLifetimeReport.rows[0]) : {};
+    const metrics = { ...analyticsMetrics, analyticsAvailable: dailyRow ? 1 : 0, ...Object.fromEntries(Object.entries(lifetimeChannel).map(([key,value])=>[`lifetime${key[0]!.toUpperCase()}${key.slice(1)}`,value])), channelViewCount: Number(stats.viewCount ?? 0), subscriberCount: Number(stats.subscriberCount ?? 0), videoCount: Number(stats.videoCount ?? 0) };
     const dailyMetrics: DailyMetricRecord[] = [{ date, platform: this.platform, accountId: channel.id, metrics, collectedAt }];
 
     const contentHeaders = contentReport.columnHeaders ?? [];
@@ -137,6 +139,7 @@ export class YouTubeAdapter implements MetricsAdapter {
         ...(typeof values.engagedViews === "number" ? { engagedViews: values.engagedViews } : {}),
         ...(typeof values.averageViewPercentage === "number" ? { averageViewPercentage: values.averageViewPercentage } : {}),
         ...(typeof values.subscribersGained === "number" ? { subscribersGained: values.subscribersGained } : {}),
+        ...(typeof values.subscribersLost === "number" ? { subscribersLost: values.subscribersLost } : {}),
         ...(isoDurationSeconds(video?.contentDetails?.duration) !== undefined ? { videoDurationSeconds: isoDurationSeconds(video?.contentDetails?.duration)! } : {}),
         analyticsAvailable: analyticsByVideo.has(contentId), metricSemantics: "period",
         lifetimeViews: typeof lifetime.views === "number" ? lifetime.views : Number(publicStats.viewCount ?? 0),
@@ -145,6 +148,7 @@ export class YouTubeAdapter implements MetricsAdapter {
         ...(typeof lifetime.averageViewDuration === "number" ? { lifetimeAverageViewDuration: lifetime.averageViewDuration } : {}),
         ...(typeof lifetime.averageViewPercentage === "number" ? { lifetimeAverageViewPercentage: lifetime.averageViewPercentage } : {}),
         ...(typeof lifetime.subscribersGained === "number" ? { lifetimeSubscribersGained: lifetime.subscribersGained } : {}),
+        ...(typeof lifetime.subscribersLost === "number" ? { lifetimeSubscribersLost: lifetime.subscribersLost } : {}),
         lifetimeLikes: typeof lifetime.likes === "number" ? lifetime.likes : Number(publicStats.likeCount ?? 0),
         lifetimeComments: typeof lifetime.comments === "number" ? lifetime.comments : Number(publicStats.commentCount ?? 0), lifetimeCollectedAt: collectedAt
       };
