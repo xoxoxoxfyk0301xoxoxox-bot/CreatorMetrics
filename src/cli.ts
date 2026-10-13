@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { writeFile } from "node:fs/promises";
+import { readFile, rename, writeFile } from "node:fs/promises";
 import { URL } from "node:url";
 import { google } from "googleapis";
 import { loadConfig, loadContentAIConfig, loadPinterestConfig, loadThreadsConfig, loadThreadsOAuthConfig, loadYouTubeConfig } from "./config.js";
@@ -36,6 +36,7 @@ import { GoogleSheetsPostingDashboardStore } from "./posting-dashboard/google-sh
 import { runPostingDashboard } from "./posting-dashboard/index.js";
 import { inferPostingSlot, jstDateTime, POSTING_TIME_RULE } from "./posting/time-windows.js";
 import { buildYouTubeIntelligenceExport, readYouTubeExportInput, writeYouTubeIntelligenceExport } from "./youtube-intelligence-export.js";
+import { backfillYouTubeChannel } from "./youtube-channel-backfill.js";
 
 type SelectedPlatform = "youtube" | "pinterest" | "threads";
 
@@ -164,9 +165,19 @@ async function report(): Promise<void> {
 async function exportYouTubeIntelligence(): Promise<void> {
   const config=loadConfig(),auth=createGoogleAuth(config.google);
   const input=await readYouTubeExportInput(auth,config.google.sheetId);
-  const output=buildYouTubeIntelligenceExport({...input,timeZone:config.timeZone});
+  let backfill;try{backfill=JSON.parse(await readFile("exports/youtube-channel-backfill.json","utf8"));}catch{}
+  const output=buildYouTubeIntelligenceExport({...input,timeZone:config.timeZone,backfill});
   await writeYouTubeIntelligenceExport(output);
   console.log(`YouTube intelligence export: videos=${output.videos.length} schema=${output.schemaVersion}`);
+}
+
+async function backfillYouTube(rolling=false):Promise<void>{
+  const config=loadConfig(),auth=createGoogleAuth(config.google),store=new GoogleSheetsStore(auth,config.google.sheetId,config.google.metricsSheet,config.google.logSheet,config.google.contentSheet);
+  const endDate=rolling?dateInTimeZone(new Date(Date.now()-86400000),"America/Los_Angeles"):assertIsoDate(cliOption("end")),end=new Date(`${endDate}T00:00:00Z`);end.setUTCDate(end.getUTCDate()-89);const startDate=rolling?end.toISOString().slice(0,10):assertIsoDate(cliOption("start"));
+  const result=await backfillYouTubeChannel(auth,store,startDate,endDate,loadYouTubeConfig().channelId);
+  const report={schemaVersion:"1.0.0",generatedAt:new Date().toISOString(),startDate:result.startDate,endDate:result.endDate,reportingTimeZone:result.reportingTimeZone,requestedDays:result.requestedDays,successfulDays:result.successfulDays,missingDays:result.missingDays,periods:result.periods};
+  await writeFile("exports/youtube-channel-backfill.json.tmp",`${JSON.stringify(report,null,2)}\n`,{encoding:"utf8",mode:0o600});await rename("exports/youtube-channel-backfill.json.tmp","exports/youtube-channel-backfill.json");
+  console.log(`YouTube channel backfill: requested=${result.requestedDays} successful=${result.successfulDays} missing=${result.missingDays.length} range=${startDate}..${endDate} reportingTimeZone=${result.reportingTimeZone}`);
 }
 
 async function daily(): Promise<void> {
@@ -259,6 +270,8 @@ else if (command === "dashboard") await dashboard();
 else if (command === "report") await report();
 else if (command === "daily") await daily();
 else if (command === "youtube:export") await exportYouTubeIntelligence();
+else if (command === "youtube:backfill") await backfillYouTube();
+else if (command === "youtube:backfill:rolling") await backfillYouTube(true);
 else if (command === "posting:dashboard") await postingDashboard();
 else if (command.startsWith("content:threads:")) await contentAI(command);
 else if (command.startsWith("post:threads:")) await posting(command);

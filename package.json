@@ -24,6 +24,8 @@
     "report": "tsx src/cli.ts report",
     "daily": "tsx src/cli.ts daily",
     "youtube:export": "tsx src/cli.ts youtube:export",
+    "youtube:backfill": "tsx src/cli.ts youtube:backfill",
+    "youtube:backfill:rolling": "tsx src/cli.ts youtube:backfill:rolling",
     "scheduler:install": "node scripts/scheduler.mjs install",
     "scheduler:status": "node scripts/scheduler.mjs status",
     "scheduler:run": "node scripts/scheduler.mjs run",

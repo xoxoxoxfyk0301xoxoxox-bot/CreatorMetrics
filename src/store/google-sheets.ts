@@ -47,6 +47,11 @@ export class GoogleSheetsStore implements MetricsStore, ImportStore {
     })), (row) => [row[0], row[1], row[2]].join("|"));
   }
 
+  async readDailyMetrics():Promise<DailyMetricRecord[]>{
+    const response=await this.sheets.spreadsheets.values.get({spreadsheetId:this.spreadsheetId,range:`${quoteSheet(this.metricsSheet)}!A2:E`});
+    return(response.data.values??[]).flatMap(row=>{try{const metrics=JSON.parse(String(row[3]??""));if(!metrics||typeof metrics!=="object")return[];return[{date:String(row[0]??""),platform:String(row[1]??"") as DailyMetricRecord["platform"],accountId:String(row[2]??""),metrics,collectedAt:String(row[4]??"")}];}catch{return[];}});
+  }
+
   async upsertContentMetrics(records: ContentMetricRecord[]): Promise<number> {
     if (!records.length) return 0;
     await this.ensureSheet(this.contentSheet, CONTENT_HEADER);
